@@ -23,3 +23,4 @@ go.work
 /.idea/workspace.xml
 /.idea/vcs.xml
 /.idea/spotify-local-manager.iml
+token.json

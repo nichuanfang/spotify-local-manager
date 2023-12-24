@@ -15,7 +15,7 @@ func generateAuthorizationURL() (authorizationURL string) {
 	//认证器初始化
 	auth = spotifyauth.New(
 		spotifyauth.WithRedirectURL(redirectURL),
-		spotifyauth.WithClientID(spotifyClientId),
+		spotifyauth.WithClientID(spotifyClientID),
 		spotifyauth.WithClientSecret(spotifyClientSecret),
 		spotifyauth.WithScopes(authScopes...))
 	authorizationURL = auth.AuthURL(state)
