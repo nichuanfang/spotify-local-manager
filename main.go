@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	. "github.com/nichuanfang/spotify-local-manager/util"
 	spotifyauth "github.com/zmb3/spotify/v2/auth"
+	"golang.org/x/oauth2"
 )
 
 var (
@@ -28,10 +30,6 @@ var (
 	authChan = make(chan struct{})
 	//服务停止信号
 	stopChan = make(chan struct{})
-	//默认浏览器
-	defaultBrowser string
-	//浏览器是否打开
-	browserState bool
 	//认证器
 	auth *spotifyauth.Authenticator
 )
@@ -44,12 +42,21 @@ func init() {
 	}
 	redirectURL = "http://127.0.0.1:9999/callback"
 	state = GenerateRandString(10)
-	//初始化浏览器参数
-	initBrowser()
+}
+
+// openAuthorizationURL 使用默认浏览器打开授权URL
+func openAuthorizationURL() {
+	authorizationURL := generateAuthorizationURL()
+	//调用系统指令使用默认浏览器打开该URL
+	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", authorizationURL)
+	err := cmd.Start()
+	if err != nil {
+		fmt.Errorf(err.Error())
+	}
 }
 
 // 业务协程
-func business(tokenChan chan string) {
+func business(tokenChan chan *oauth2.Token) {
 	defer wg.Done()
 
 loop:
@@ -60,36 +67,28 @@ loop:
 			//		发起打开授权URL的指令 最终会进入准备了回调接口的协程
 			openAuthorizationURL()
 		// 一直阻塞到获取到refreshToken
-		case refreshToken := <-tokenChan:
+		case token := <-tokenChan:
 			fmt.Println("开始业务处理...")
-			fmt.Print(refreshToken)
+			fmt.Print(token)
 			// 业务执行完毕 通知其他协程取消
 			stopChan <- struct{}{}
 			break loop
-
 		}
 	}
 }
 
 // 授权协程
-func callback(server *http.Server, tokenChan chan string) {
+func callback(server *http.Server, tokenChan chan *oauth2.Token) {
 	defer wg.Done()
 	//创建路由对象
 	router := gin.Default()
 
 	// 注册路由
 	router.GET("/callback", func(c *gin.Context) {
-		//接收到回调之后 关闭浏览器
-		if !browserState {
-			//	如果之前是关闭状态 就关闭浏览器
-			closeBrowser()
-		}
-		code := c.Query("code") //成功请求到token之后放入tokenChan
-		fmt.Printf("开始根据code: %s 获取token\n", code)
-
-		//通过code申请token
-
-		tokenChan <- code + ":sddd8a9s8q234rhasdfhi7234"
+		//申请token
+		token := exchangeCodeForToken(c.Writer, c.Request)
+		//将获取到的refreshToken传输到通道中
+		tokenChan <- token
 	})
 	//绑定server
 	server.Handler = router
@@ -121,8 +120,8 @@ func main() {
 
 	wg.Add(2)
 
-	// 创建一个token通道 值为refresh_token  业务协程拿到这个refresh_token之后 获取access_token来执行操作
-	tokenChan := make(chan string)
+	// 创建一个token通道 值为*oauth2.Token 业务协程拿到这个token之后
+	tokenChan := make(chan *oauth2.Token)
 
 	server := &http.Server{
 		Addr: ":9999",

@@ -21,3 +21,5 @@ vendor/
 # Go workspace file
 go.work
 /.idea/workspace.xml
+/.idea/vcs.xml
+/.idea/spotify-local-manager.iml
