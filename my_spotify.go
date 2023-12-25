@@ -206,11 +206,12 @@ func getTracksByPlayList(sp *spotify.Client, ctx context.Context, playList spoti
 
 // isTrackInLocalTracks 判断spotify已收录元信息的曲目是否存在于本地库
 func isTrackInLocalTracks(track util.MP3MetaInfo, localTracks []util.MP3MetaInfo) (flag bool) {
+
 loop:
 	for _, localTrack := range localTracks {
-		if localTrack.Artist == track.Artist &&
-			localTrack.Title == track.Title &&
-			localTrack.Album == track.Album {
+		if util.EvaluateSimilar(localTrack.Artist, track.Artist) &&
+			util.EvaluateSimilar(localTrack.Title, track.Title) &&
+			util.EvaluateSimilar(localTrack.Album, track.Album) {
 			flag = true
 			break loop
 		}
@@ -222,9 +223,9 @@ loop:
 func removeTrack(localTracks []util.MP3MetaInfo, track util.MP3MetaInfo) []util.MP3MetaInfo {
 	newTracks := make([]util.MP3MetaInfo, 0)
 	for _, localTrack := range localTracks {
-		if localTrack.Artist == track.Artist &&
-			localTrack.Title == track.Title &&
-			localTrack.Album == track.Album {
+		if util.EvaluateSimilar(localTrack.Artist, track.Artist) &&
+			util.EvaluateSimilar(localTrack.Title, track.Title) &&
+			util.EvaluateSimilar(localTrack.Album, track.Album) {
 			continue
 		}
 		newTracks = append(newTracks, localTrack)
@@ -238,14 +239,16 @@ func diffTracks(localTracks []util.MP3MetaInfo, tracks []util.MP3MetaInfo) []uti
 	//如果tracks中的曲目 在localTracks中不存在  说明该文件属于分类错误 将这些文件过滤出来
 	//localTracks-tracks剩余的曲目是需要分类的
 	// 在spotifyLocalTemp文件夹创建歌单分类文件夹 将过滤出的这些曲目移动过去
+
 	finalTracks := make([]util.MP3MetaInfo, 0)
 	for _, track := range tracks {
+		//todo 如果文件名为空 还需要去spotify_local文件夹去查找
 		if isTrackInLocalTracks(track, localTracks) {
 			//从localTracks中移除该曲目
 			localTracks = removeTrack(localTracks, track)
 		} else {
-			//属于其他歌单的曲目 添加到过滤好的结果中
-			finalTracks = append(finalTracks, track)
+			//todo  属于其他歌单的曲目 添加到过滤好的结果中 文件名待定
+			//finalTracks = append(finalTracks, track)
 		}
 	}
 	//将finalTracks+localTracks 汇合成一个新的将finalTracks
@@ -349,6 +352,10 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 			//将未分类的,分类错误的(以本地为准)本地文件移到spotify_local_temp文件夹
 			//打开spotify客户端 本地来源关闭spotify_local 新增spotify_local_temp
 			//分类完毕 再将本地来源改回去即可(关闭spotify_local_temp 新增spotify_local)
+			if len(localTracks) == 0 {
+				// 说明spotify服务器以前同步了元数据 但是本地文件丢失 需要手动将服务器这部分文件元数据删除
+				continue
+			}
 			unHandledTracks := diffTracks(localTracks, tracks)
 			if len(unHandledTracks) != 0 {
 				//移动到temp文件夹
