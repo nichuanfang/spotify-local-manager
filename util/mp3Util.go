@@ -2,9 +2,9 @@ package util
 
 import (
 	"fmt"
-	"os"
+	"path/filepath"
 
-	"github.com/hajimehoshi/go-mp3"
+	"github.com/bogem/id3v2"
 )
 
 // MP3MetaInfo mp3类
@@ -15,22 +15,27 @@ type MP3MetaInfo struct {
 	Artist string
 	//专辑
 	Album string
+	//所属歌单名称
+	PlayListName string
+	//文件名称
+	FileName string
 }
 
 // ExtractMp3FromPath 根据路径解析MP3元信息
-func ExtractMp3FromPath(mp3Path string) (mp3MetaInfo MP3MetaInfo, err error) {
-	var mp3File *os.File
-	mp3File, err = os.Open(mp3Path)
+func ExtractMp3FromPath(mp3Path string) (MP3MetaInfo, error) {
+	mp3Tag, err := id3v2.Open(mp3Path, id3v2.Options{
+		Parse: true,
+	})
 	if err != nil {
 		fmt.Println("err: ", err)
-		return
+		return MP3MetaInfo{}, err
 	}
-	decoder, err := mp3.NewDecoder(mp3File)
-	if err != nil {
-		fmt.Println("err: ", err)
-		return
-	}
-	decoder.Length()
-	mp3File.Name()
-	return
+	parentDirPath, fileName := filepath.Split(mp3Path)
+	return MP3MetaInfo{
+		Title:        mp3Tag.Title(),
+		Artist:       mp3Tag.Artist(),
+		Album:        mp3Tag.Album(),
+		PlayListName: filepath.Base(parentDirPath),
+		FileName:     fileName,
+	}, nil
 }

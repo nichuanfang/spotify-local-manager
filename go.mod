@@ -3,7 +3,7 @@ module github.com/nichuanfang/spotify-local-manager
 go 1.21.5
 
 require (
-	github.com/hajimehoshi/go-mp3 v0.3.4
+	github.com/bogem/id3v2 v1.2.0
 	github.com/zmb3/spotify/v2 v2.4.0
 )
 
