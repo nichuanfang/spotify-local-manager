@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -294,10 +295,17 @@ func moveToTemp(unHandledTracks []util.MP3MetaInfo, playListName string) {
 		if err != nil {
 			fmt.Println("拷贝失败!: ", err)
 		}
-		dest.Close()
-		origin.Close()
+		err = dest.Close()
+		if err != nil {
+			fmt.Println("关闭dest文件失败: ", err)
+			return
+		}
+		err = origin.Close()
+		if err != nil {
+			fmt.Println("关闭origin文件失败: ", err)
+			return
+		}
 	}
-
 }
 
 // handle 业务处理方法
@@ -324,7 +332,7 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 
 	//获取本地元数据
 	localMusicMetaData := getLocalMusicMetaData()
-
+	serializeData := make(map[string][]map[string]string)
 	//遍历歌单集合 过滤出本地  `未分类`  和   `分类错误的歌曲(以本地为准) 即能在本地文件夹找到 同时该mp3文件所属父文件夹的名称与当前歌单名称不一致`
 	for _, playList := range playLists {
 		//查询本地元数据 通过key = 歌单名称查询 是否在映射中存在
@@ -345,6 +353,15 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 			if len(unHandledTracks) != 0 {
 				//移动到temp文件夹
 				moveToTemp(unHandledTracks, playList.Name)
+				tempSlice := make([]map[string]string, 0)
+				for _, track := range unHandledTracks {
+					tempSlice = append(tempSlice, map[string]string{
+						"title":  track.Title,
+						"Artist": track.Artist,
+						"Album":  track.Album,
+					})
+				}
+				serializeData[playList.Name] = tempSlice
 			}
 		} else {
 			//本地音乐库不存在该歌单 创建该歌单文件夹
@@ -356,6 +373,23 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 			}
 		}
 	}
+	currDir, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	uncateforizedFile, err := os.Create(filepath.Join(currDir, "uncategorized.json"))
+	if err != nil {
+		return false
+	}
+	defer uncateforizedFile.Close()
+	//序列化成json到当前文件夹
+	encoder := json.NewEncoder(uncateforizedFile)
+	err = encoder.Encode(serializeData)
+	if err != nil {
+		fmt.Println("序列化数据失败: ", err)
+		return false
+	}
+	//打印曲目分类信息 [歌单名称]   [起始序号]   [终止序号]
 	success = true
 	return
 }

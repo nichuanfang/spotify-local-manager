@@ -37,6 +37,8 @@ var (
 	stopChan = make(chan struct{})
 	//认证器
 	auth *spotifyauth.Authenticator
+	//项目配置根目录
+	spotifyConfigBasePath string
 	//token文件所在目录
 	tokenPath string
 	//spotify本地文件所在目录
@@ -72,7 +74,7 @@ func init() {
 	//home目录
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
-		spotifyConfigBasePath := filepath.Join(homeDir, ".spotifyLocalManager")
+		spotifyConfigBasePath = filepath.Join(homeDir, ".spotifyLocalManager")
 		err := os.MkdirAll(spotifyConfigBasePath, os.ModeDir)
 		if err != nil {
 			fmt.Println("无法创建目录:", err)
@@ -81,7 +83,7 @@ func init() {
 		tokenPath = filepath.Join(spotifyConfigBasePath, "token.json")
 
 	} else {
-		fmt.Errorf("获取用户目录错误")
+		fmt.Println("获取用户目录错误")
 		os.Exit(1)
 	}
 	//根据执行exe的目录来推断spotify_local和spotify_local_temp
@@ -98,6 +100,9 @@ func init() {
 	}
 	spotifyLocalPath = filepath.Join(currDir, "spotify_local")
 	spotifyLocalTempPath = filepath.Join(currDir, "spotify_local_temp")
+	//如果临时文件夹不存在 则创建
+	_ = os.RemoveAll(spotifyLocalTempPath)
+	_ = os.MkdirAll(spotifyLocalTempPath, os.ModeDir)
 }
 
 // openAuthorizationURL 使用默认浏览器打开授权URL
@@ -107,7 +112,7 @@ func openAuthorizationURL() {
 	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", authorizationURL)
 	err := cmd.Start()
 	if err != nil {
-		fmt.Errorf(err.Error())
+		fmt.Println(err.Error())
 	}
 }
 
@@ -229,7 +234,8 @@ func main() {
 	go callback(server)
 	// 等待两个协程执行完毕
 	wg.Wait()
-	//处理完成
+	//数据处理完成
+
 	fmt.Println("处理完成! 3秒后关闭此窗口")
 	time.Sleep(3 * time.Second)
 }
