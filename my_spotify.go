@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nichuanfang/spotify-local-manager/util"
 	"github.com/zmb3/spotify/v2"
 	spotifyauth "github.com/zmb3/spotify/v2/auth"
 	"golang.org/x/oauth2"
@@ -50,6 +54,106 @@ func getClient(r *http.Request, token *oauth2.Token) *http.Client {
 	return auth.Client(r.Context(), token)
 }
 
+//获取本地文件夹`spotifyLocalPath`的歌单元信息
+
+// 数据结构:  key: 歌单名称 string   value:  歌曲名称切片 []util.MP3
+func getLocalMusicMetaData() map[string][]util.MP3MetaInfo {
+	//初始化一个映射
+	res := make(map[string][]util.MP3MetaInfo)
+	//读取spotifyLocalPath
+	filepath.Walk(spotifyLocalPath, func(path string, info fs.FileInfo, err error) error {
+		if info.IsDir() {
+			res[info.Name()] = make([]util.MP3MetaInfo, 0)
+		} else if strings.HasSuffix(info.Name(), ".mp3") {
+			//todo 读取mp3文件元信息 获取歌曲标题 歌手 专辑名称 方便之后在同步的时候根据这些元信息校对
+			mp3, err := util.ExtractMp3FromPath(path)
+			if err != nil {
+				//当前mp3无法处理 直接跳过
+				return nil
+			}
+			//	如果是MP3文件
+			parentDirPath, _ := filepath.Split(path)
+			//此为key
+			parentDir := filepath.Base(parentDirPath)
+			tracks, ok := res[parentDir]
+			if ok {
+				//如果存在key
+				tracks := append(tracks, mp3)
+				res[parentDir] = tracks
+			}
+		}
+		handleError(err)
+		return err
+	})
+
+	return res
+}
+
+// getAllPlayLists 获取所有的歌单
+func getAllPlayLists(sp *spotify.Client, ctx context.Context, userId string) []spotify.SimplePlaylist {
+
+	playlistsForUser, err := sp.GetPlaylistsForUser(ctx, userId)
+	if err != nil {
+		fmt.Println("歌单查询失败: ", err)
+		return make([]spotify.SimplePlaylist, 0)
+	}
+	total := playlistsForUser.Total
+	if total == 0 {
+		return make([]spotify.SimplePlaylist, 0)
+	}
+	//每页的数量
+	limit := playlistsForUser.Limit
+	//每页的初始偏移量
+	offset := playlistsForUser.Offset
+	playlists := playlistsForUser.Playlists
+	//循环获取歌单
+	for offset < total {
+		//每一轮循环偏移量增加
+		offset += limit
+		getPlaylistsForUser, err := sp.GetPlaylistsForUser(ctx, userId, spotify.Limit(limit), spotify.Offset(offset))
+		currPlaylists := getPlaylistsForUser.Playlists
+		if err != nil {
+			fmt.Println("查询歌单失败: ", err)
+			continue
+		} else if len(currPlaylists) == 0 {
+			break
+		}
+		playlists = append(playlists, currPlaylists...)
+	}
+
+	return playlists
+}
+
+// getAllPlayListsIds 获取所有的歌单的id和name
+func getAllPlayListsIds(sp *spotify.Client, ctx context.Context, userId string) []map[string]string {
+	lists := getAllPlayLists(sp, ctx, userId)
+	if len(lists) == 0 {
+		//返回的是映射集合
+		return make([]map[string]string, 0)
+	}
+	// [!NOTE]
+	//切片底层是数组 为了避免扩容影响性能 需要指定一个初始容量
+	//映射底层是哈希表 容量是动态增加的 不是扩容 所以可以不指定容量
+	res := make([]map[string]string, 0)
+	for _, item := range lists {
+		playListMap := make(map[string]string)
+		playListMap["name"] = item.Name
+		playListMap["id"] = item.ID.String()
+		res = append(res, playListMap)
+	}
+	return res
+}
+
+// getAllPlayListItems 获取特定歌单的items
+func getAllPlayListItems(ctx context.Context, sp *spotify.Client, userId string, playListId string) {
+
+}
+
+// getAllPlayListsItems 获取所有歌单的items
+func getAllPlayListsItems(ctx context.Context, sp *spotify.Client, userId string, playListsIds ...string) {
+
+}
+
 // handle 业务处理方法
 func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 	//search, err := sp.Search(ctx, "Drifting Soul", spotify.SearchTypeTrack)
@@ -60,12 +164,39 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 	}
 	userId := user.ID
 	fmt.Println(userId)
+	//获取所有的playlists
+	playLists := getAllPlayLists(sp, ctx, userId)
+
+	//make是返回已经初始化好的对象 不过只能针对于[切片 映射 通道这三种类型] 适用于内置类型
+	//new是返回未初始化的对象0值指针 为对象分配0值内存 但是还未初始化 还是nil 针对自定义类型 (new返回对象的指针 但是该对象还是nil 未初始化)
+	//var tracks =  make([]spotify.SimpleTrack,10)
+	if len(playLists) == 0 {
+		//说明歌单是空的
+		success = true
+		return
+	}
+
+	//获取本地元数据
+	localMusicMetaData := getLocalMusicMetaData()
+
+	//遍历歌单集合 过滤出本地  `未分类`  和   `分类错误的歌曲(以本地为准) 即能在本地文件夹找到 同时该mp3文件所属父文件夹的名称与当前歌单名称不一致`
+	for _, playList := range playLists {
+		//查询本地元数据 通过key = 歌单名称查询 是否在映射中存在
+		tracks, ok := localMusicMetaData[playList.Name]
+		if ok {
+			//	key存在!
+			fmt.Println(len(tracks))
+		} else {
+			//本地音乐库不存在该歌单 创建该歌单 (以本地库为准)
+			continue
+		}
+		fmt.Println(playList.ID)
+	}
 
 	//所有的tracks
-	items, _ := sp.GetPlaylistItems(ctx, "3ojHX0ELdBa6VGgMwY2fYC")
+	items, _ := sp.GetPlaylistItems(ctx, "用户id: 3ojHX0ELdBa6VGgMwY2fYC")
+	//itemEndpoint := items.Endpoint
 	fmt.Println(items)
-
-	//从items中读取所有本地文件元信息
 
 	//将未分类的,分类错误的(以本地为准)本地文件移到spotify_local_temp文件夹
 
