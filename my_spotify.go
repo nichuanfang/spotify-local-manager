@@ -302,6 +302,7 @@ func moveToTemp(unHandledTracks []util.MP3MetaInfo, playListName string) {
 
 // handle 业务处理方法
 func handle(ctx context.Context, sp *spotify.Client) (success bool) {
+	fmt.Println("处理中...")
 	//search, err := sp.Search(ctx, "Drifting Soul", spotify.SearchTypeTrack)
 	user, err := sp.CurrentUser(ctx)
 	if err != nil {
@@ -309,7 +310,6 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 		return
 	}
 	userId := user.ID
-	fmt.Println(userId)
 	//获取所有的playlists
 	playLists := getAllPlayLists(sp, ctx, userId)
 

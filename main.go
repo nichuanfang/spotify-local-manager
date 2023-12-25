@@ -69,16 +69,35 @@ func init() {
 	}
 	redirectURL = "http://127.0.0.1:9999/callback"
 	state = util.GenerateRandString(10)
-	//当前目录
-	currDir, err := os.Getwd()
+	//home目录
+	homeDir, err := os.UserHomeDir()
 	if err == nil {
-		tokenPath = filepath.Join(currDir, "token.json")
+		spotifyConfigBasePath := filepath.Join(homeDir, ".spotifyLocalManager")
+		err := os.MkdirAll(spotifyConfigBasePath, os.ModeDir)
+		if err != nil {
+			fmt.Println("无法创建目录:", err)
+			os.Exit(1)
+		}
+		tokenPath = filepath.Join(spotifyConfigBasePath, "token.json")
+
 	} else {
-		fmt.Errorf("获取当前目录错误")
+		fmt.Errorf("获取用户目录错误")
 		os.Exit(1)
 	}
-	spotifyLocalPath = "D:\\spotify\\spotify_local"
-	spotifyLocalTempPath = "D:\\spotify\\spotify_local_temp"
+	//根据执行exe的目录来推断spotify_local和spotify_local_temp
+	currDir, err := os.Getwd()
+	if err != nil {
+		fmt.Println("获取当前目录失败: ", err)
+		os.Exit(1)
+	}
+	//如果当前文件夹有go.mod文件 说明是开发环境 currDir根据实际目录修改
+	_, err = os.Stat(filepath.Join(currDir, "go.mod"))
+	if err == nil {
+		//存在go.mod文件 说明是本地开发环境
+		currDir = "D:\\spotify"
+	}
+	spotifyLocalPath = filepath.Join(currDir, "spotify_local")
+	spotifyLocalTempPath = filepath.Join(currDir, "spotify_local_temp")
 }
 
 // openAuthorizationURL 使用默认浏览器打开授权URL
@@ -166,7 +185,10 @@ func callback(server *http.Server) {
 		}
 		client := auth.Client(c, token)
 		sp := spotify.New(client)
-		handle(c, sp)
+		success := handle(c, sp)
+		if success {
+			stopChan <- struct{}{}
+		}
 	})
 	//绑定server
 	server.Handler = router
@@ -205,9 +227,9 @@ func main() {
 	go boot()
 	// 认证协程
 	go callback(server)
-
 	// 等待两个协程执行完毕
 	wg.Wait()
 	//处理完成
-	fmt.Println("处理完成!")
+	fmt.Println("处理完成! 3秒后关闭此窗口")
+	time.Sleep(3 * time.Second)
 }
