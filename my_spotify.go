@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -325,8 +326,12 @@ func moveToTemp(unHandledTracks []util.MP3MetaInfo, playListName string) {
 		//移动到对应的临时文件夹
 		err := os.Rename(source, dest)
 		if err != nil {
-			fmt.Println("文件移动失败: ", err)
-			continue
+			_ = closeSpotifyProcess()
+			err = os.Rename(source, dest)
+			if err != nil {
+				fmt.Println("文件移动失败: ", err)
+				continue
+			}
 		}
 	}
 }
@@ -356,8 +361,12 @@ func moveToLocal(tickedTracks []util.MP3MetaInfo, playListName string) {
 		//移动到对应的临时文件夹
 		err := os.Rename(filepath.Join(tempBasePath, track.FileName), filepath.Join(basePath, track.FileName))
 		if err != nil {
-			fmt.Println("文件移动失败: ", err)
-			continue
+			_ = closeSpotifyProcess()
+			err := os.Rename(filepath.Join(tempBasePath, track.FileName), filepath.Join(basePath, track.FileName))
+			if err != nil {
+				fmt.Println("文件移动失败: ", err)
+				continue
+			}
 		}
 	}
 }
@@ -491,4 +500,13 @@ func postProcess(uncategorizedData map[string][]util.MP3MetaInfo) {
 			moveToLocal(tickedTracks, playListName)
 		}
 	}
+}
+
+func closeSpotifyProcess() error {
+	cmd := exec.Command("taskkill", "/IM", "Spotify.exe", "/F")
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("关闭 Spotify 进程失败：%v", err)
+	}
+	return nil
 }
