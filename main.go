@@ -147,6 +147,16 @@ func init() {
 	os.MkdirAll(spotifyLocalTempPath, os.ModeDir)
 }
 
+// 用默认浏览器打开URL
+func openURL(url string) {
+	//调用系统指令使用默认浏览器打开该URL
+	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	err := cmd.Start()
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+}
+
 // openAuthorizationURL 使用默认浏览器打开授权URL
 func openAuthorizationURL() {
 	fmt.Printf("请去 https://developer.spotify.com/dashboard 设置里添加回调地址: %s\n", redirectURL)
@@ -393,6 +403,7 @@ func main() {
 		}
 		engine := gin.Default()
 		engine.GET("/uncategorized", func(c *gin.Context) {
+			//todo 监听uncategorized.json 文件变化  如果有改动就要更新此接口
 			marshal, err := json.Marshal(uncategorizedData)
 			if err != nil {
 				c.Writer.WriteString("json marshal failed: " + err.Error())
@@ -401,9 +412,9 @@ func main() {
 			c.Writer.Write(marshal)
 		})
 		go engine.Run(":" + strconv.Itoa(listenPort))
-		fmt.Printf("处理完成! 请前往如下地址查看分类信息(打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹):\n\nhttp://127.0.0.1:%d/uncategorized\n\n\n\n", listenPort)
-
-		//todo 创建一个信号来监听终止事件  来将分好类的临时曲目移动到对应的spotify_local文件夹中  同时保留文件夹里未分类的临时曲目 序列化uncategorized.json的时候还要包含上一次处理后临时文件夹的未处理曲目
+		fmt.Print("处理完成! 请打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹\n\n")
+		openURL(fmt.Sprintf("http://127.0.0.1:%d/uncategorized", listenPort))
+		//创建一个信号来监听终止事件  来将分好类的临时曲目移动到对应的spotify_local文件夹中  同时保留文件夹里未分类的临时曲目 序列化uncategorized.json的时候还要包含上一次处理后临时文件夹的未处理曲目
 
 		//os.Interrupt 是一个预定义的常量，表示中断信号，通常由用户按下 Ctrl+C 键触发。
 

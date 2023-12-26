@@ -67,7 +67,7 @@ func getLocalMusicMetaData() map[string][]util.MP3MetaInfo {
 	res := make(map[string][]util.MP3MetaInfo)
 	//读取spotifyLocalPath
 	filepath.Walk(spotifyLocalPath, func(path string, info fs.FileInfo, err error) error {
-		if info.IsDir() {
+		if info != nil && info.IsDir() && info.Name() != "spotify_local" {
 			res[info.Name()] = make([]util.MP3MetaInfo, 0)
 		} else if strings.HasSuffix(info.Name(), ".mp3") {
 			mp3, err := util.ExtractMp3FromPath(path)
@@ -94,7 +94,7 @@ func loadLocalTempMusic() map[string][]util.MP3MetaInfo {
 	res := make(map[string][]util.MP3MetaInfo)
 	//读取spotifyLocalPath
 	filepath.Walk(spotifyLocalTempPath, func(path string, info fs.FileInfo, err error) error {
-		if info.IsDir() {
+		if info != nil && info.IsDir() && info.Name() != "spotify_local_temp" {
 			res[info.Name()] = make([]util.MP3MetaInfo, 0)
 		} else if strings.HasSuffix(info.Name(), ".mp3") {
 			mp3, err := util.ExtractMp3FromPath(path)
@@ -111,6 +111,12 @@ func loadLocalTempMusic() map[string][]util.MP3MetaInfo {
 		}
 		return handleError(err)
 	})
+	// 移除切片长度为0的键值对
+	for key, value := range res {
+		if len(value) == 0 {
+			delete(res, key)
+		}
+	}
 	return res
 }
 
@@ -307,14 +313,17 @@ func moveToTemp(unHandledTracks []util.MP3MetaInfo, playListName string) {
 			return
 		}
 		moveToTemp(unHandledTracks, playListName)
+		return
 	}
 	//	遍历unHandledTracks 如果存在和mp3Files中匹配的mp3文件就跳过
 	for _, track := range unHandledTracks {
 		if flag, _ := isTrackInLocalTracks(track, mp3Files); flag {
 			continue
 		}
+		source := filepath.Join(basePath, track.FileName)
+		dest := filepath.Join(tempBasePath, track.FileName)
 		//移动到对应的临时文件夹
-		err := os.Rename(filepath.Join(basePath, track.FileName), filepath.Join(tempBasePath, track.FileName))
+		err := os.Rename(source, dest)
 		if err != nil {
 			fmt.Println("文件移动失败: ", err)
 			continue
@@ -390,7 +399,7 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 			//	key存在!
 			//根据playListId查询在线歌单的tracks
 			tracks, err := getTracksByPlayList(sp, ctx, playList)
-			if err != nil || len(tracks) == 0 {
+			if err != nil {
 				//如果获取歌单失败 处理下一个歌单
 				continue
 			}
@@ -398,10 +407,15 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 			//将未分类的,分类错误的(以本地为准)本地文件移到spotify_local_temp文件夹
 			//打开spotify客户端 本地来源关闭spotify_local 新增spotify_local_temp
 			//分类完毕 再将本地来源改回去即可(关闭spotify_local_temp 新增spotify_local)
-			if len(localTracks) == 0 {
-				// 说明spotify服务器以前同步了元数据 但是本地文件丢失 需要手动将服务器这部分文件元数据删除
-				continue
-			}
+
+			//if  len(tracks) == 0{
+			//	//本地的曲目需要全部同步过去
+			//	continue
+			//}
+			//if len(localTracks) == 0 {
+			//	// 说明spotify服务器以前同步了元数据 但是本地文件丢失 需要手动将服务器这部分文件元数据删除
+			//	continue
+			//}
 			unHandledTracks, _ := diffTracks(localTracks, tracks)
 			if len(unHandledTracks) != 0 {
 				//移动到temp文件夹
