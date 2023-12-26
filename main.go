@@ -21,8 +21,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-//todo 使用loguru日志框架
-
 var (
 	//spotify客户端id
 	spotifyClientID string
@@ -80,7 +78,7 @@ type spotifyPrincipal struct {
 
 // 返回重定向URL
 func (principal *spotifyPrincipal) getRedirectURL() string {
-	return fmt.Sprintf("http://127.0.0.1/%d/callback", principal.Port)
+	return fmt.Sprintf("http://127.0.0.1:%d/callback", principal.Port)
 }
 
 func init() {
@@ -156,8 +154,6 @@ func openAuthorizationURL() {
 }
 
 func initOauthConfig(clientID string, clientSecret string, port int) {
-	//todo 接受用户输入spotifyClientID和spotifyClientSecret和监听端口  认证成功之后将它存储到token.json
-	// 生成 回调地址  http:// 127.0.0.1:{listenPort}/callback 提醒用户去 https://developer.spotify.com/dashboard 添加该回调URL  如果之后授权发现回调地址不可用 说明添加失败 还要提醒用户添加回调URL
 	//如果tokenPath不存在 就要求用户输入这两个值 ; 如果存在 在反序列号token.json成功之后 将对应的值设置到客户端ID,密钥,端口中
 	reader := bufio.NewReader(os.Stdin)
 	if clientID != "" {
@@ -244,6 +240,10 @@ func boot() {
 				}
 				break
 			}
+			spotifyClientID = principal.SpotifyClientID
+			spotifyClientSecret = principal.SpotifyClientSecret
+			listenPort = principal.Port
+			redirectURL = principal.getRedirectURL()
 			ctx := context.Background()
 			config := &oauth2.Config{
 				ClientID:     principal.SpotifyClientID,
@@ -355,6 +355,37 @@ func main() {
 	wg.Wait()
 	//数据处理完成
 
-	fmt.Println("处理完成! 3秒后关闭此窗口")
-	time.Sleep(3 * time.Second)
+	//如果生成的uncategorized.json不是空的json串 则开启一个服务 去提供访问
+	uncategorizedFile, err := os.Open(filepath.Join(spotifyConfigBasePath, "uncategorized.json"))
+	if os.IsNotExist(err) {
+		fmt.Println("处理完成! \n3秒后关闭此窗口...")
+		time.Sleep(3 * time.Second)
+		return
+	} else if err == nil {
+		uncategorizedData := make(map[string][]map[string]string)
+		//	对uncategorizedFile进行反序列化 如果是个空结果 说明没有待分类的曲目;如果不是空 取出结果 开启server 向用户提供端点 使用默认浏览器打开该URL
+		decoder := json.NewDecoder(uncategorizedFile)
+		err := decoder.Decode(&uncategorizedData)
+		if err != nil {
+			fmt.Println("反序列化失败! ", err)
+			os.Exit(1)
+		}
+		if uncategorizedData == nil || len(uncategorizedData) == 0 {
+			fmt.Println("处理完成! 没有待分类的曲目! \n3秒后关闭此窗口...")
+			time.Sleep(3 * time.Second)
+			return
+		}
+		engine := gin.Default()
+		engine.GET("/uncategorized", func(c *gin.Context) {
+			marshal, err := json.Marshal(uncategorizedData)
+			if err != nil {
+				c.Writer.WriteString("json marshal failed: " + err.Error())
+				return
+			}
+			c.Writer.Write(marshal)
+		})
+		go engine.Run(":" + strconv.Itoa(listenPort))
+		fmt.Printf("处理完成! 请前往如下地址查看分类信息:\nhttp://127.0.0.1:%d/uncategorized\n\n\n\n", listenPort)
+		select {}
+	}
 }

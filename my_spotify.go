@@ -373,11 +373,7 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 			}
 		}
 	}
-	currDir, err := os.Getwd()
-	if err != nil {
-		return false
-	}
-	uncateforizedFile, err := os.Create(filepath.Join(currDir, "uncategorized.json"))
+	uncateforizedFile, err := os.Create(filepath.Join(spotifyConfigBasePath, "uncategorized.json"))
 	if err != nil {
 		return false
 	}
