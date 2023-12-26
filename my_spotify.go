@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -17,6 +16,9 @@ import (
 	spotifyauth "github.com/zmb3/spotify/v2/auth"
 	"golang.org/x/oauth2"
 )
+
+// 存储歌单名与ID的映射
+var playListMap = make(map[string]spotify.ID)
 
 // 生成授权URL
 func generateAuthorizationURL() (authorizationURL string) {
@@ -83,6 +85,32 @@ func getLocalMusicMetaData() map[string][]util.MP3MetaInfo {
 		return handleError(err)
 	})
 
+	return res
+}
+
+// 加载临时文件夹到序列化数据中
+func loadLocalTempMusic() map[string][]util.MP3MetaInfo {
+	//初始化一个映射
+	res := make(map[string][]util.MP3MetaInfo)
+	//读取spotifyLocalPath
+	filepath.Walk(spotifyLocalTempPath, func(path string, info fs.FileInfo, err error) error {
+		if info.IsDir() {
+			res[info.Name()] = make([]util.MP3MetaInfo, 0)
+		} else if strings.HasSuffix(info.Name(), ".mp3") {
+			mp3, err := util.ExtractMp3FromPath(path)
+			if err != nil {
+				//当前mp3无法处理 直接跳过
+				return nil
+			}
+			tracks, ok := res[mp3.PlayListName]
+			if ok {
+				//如果存在key
+				tracks := append(tracks, mp3)
+				res[mp3.PlayListName] = tracks
+			}
+		}
+		return handleError(err)
+	})
 	return res
 }
 
@@ -204,13 +232,18 @@ func getTracksByPlayList(sp *spotify.Client, ctx context.Context, playList spoti
 }
 
 // isTrackInLocalTracks 判断spotify已收录元信息的曲目是否存在于本地库
-func isTrackInLocalTracks(track util.MP3MetaInfo, localTracks []util.MP3MetaInfo) (flag bool) {
+func isTrackInLocalTracks(track util.MP3MetaInfo, localTracks []util.MP3MetaInfo) (flag bool, filename string) {
 
 loop:
 	for _, localTrack := range localTracks {
 		if util.EvaluateSimilar(localTrack.Artist, track.Artist) &&
 			util.EvaluateSimilar(localTrack.Title, track.Title) &&
 			util.EvaluateSimilar(localTrack.Album, track.Album) {
+			if localTrack.FileName != "" {
+				filename = localTrack.FileName
+			} else if track.FileName != "" {
+				filename = track.FileName
+			}
 			flag = true
 			break loop
 		}
@@ -233,19 +266,21 @@ func removeTrack(localTracks []util.MP3MetaInfo, track util.MP3MetaInfo) []util.
 }
 
 // diffTracks 比较本地曲目和线上本地曲目 过滤出未分类和分类错误的曲目
-func diffTracks(localTracks []util.MP3MetaInfo, tracks []util.MP3MetaInfo) []util.MP3MetaInfo {
+func diffTracks(localTracks []util.MP3MetaInfo, tracks []util.MP3MetaInfo) ([]util.MP3MetaInfo, []util.MP3MetaInfo) {
 	//所有标准皆以本地为准
 	//如果tracks中的曲目 在localTracks中不存在  说明该文件属于分类错误 将这些文件过滤出来
 	//localTracks-tracks剩余的曲目是需要分类的
 	// 在spotifyLocalTemp文件夹创建歌单分类文件夹 将过滤出的这些曲目移动过去
+	tickedTracks := make([]util.MP3MetaInfo, 0)
 	for _, track := range tracks {
-		if isTrackInLocalTracks(track, localTracks) {
+		if flag, filename := isTrackInLocalTracks(track, localTracks); flag {
+			track.FileName = filename
 			//从localTracks中移除该曲目
 			localTracks = removeTrack(localTracks, track)
+			tickedTracks = append(tickedTracks, track)
 		}
 	}
-	//将finalTracks+localTracks 汇合成一个新的将finalTracks
-	return localTracks
+	return localTracks, tickedTracks
 }
 
 func moveToTemp(unHandledTracks []util.MP3MetaInfo, playListName string) {
@@ -275,31 +310,45 @@ func moveToTemp(unHandledTracks []util.MP3MetaInfo, playListName string) {
 	}
 	//	遍历unHandledTracks 如果存在和mp3Files中匹配的mp3文件就跳过
 	for _, track := range unHandledTracks {
-		if isTrackInLocalTracks(track, mp3Files) {
+		if flag, _ := isTrackInLocalTracks(track, mp3Files); flag {
 			continue
 		}
-		//拷贝到对应的文件夹
-		dest, err := os.Create(filepath.Join(tempBasePath, track.FileName))
+		//移动到对应的临时文件夹
+		err := os.Rename(filepath.Join(basePath, track.FileName), filepath.Join(tempBasePath, track.FileName))
 		if err != nil {
+			fmt.Println("文件移动失败: ", err)
 			continue
 		}
-		origin, err := os.Open(filepath.Join(basePath, track.FileName))
-		if err != nil {
+	}
+}
+
+// 移动至本地文件夹
+func moveToLocal(tickedTracks []util.MP3MetaInfo, playListName string) {
+	basePath := filepath.Join(spotifyLocalPath, playListName)
+	tempBasePath := filepath.Join(spotifyLocalTempPath, playListName)
+	mp3Files := make([]util.MP3MetaInfo, 0)
+	filepath.Walk(basePath, func(path string, info fs.FileInfo, err error) error {
+		//如果当前文件是mp3
+		if err != nil && info != nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".mp3") {
+			metaInfo, err := util.ExtractMp3FromPath(path)
+			if err != nil {
+				//当前mp3处理失败下一个
+				return nil
+			}
+			mp3Files = append(mp3Files, metaInfo)
+		}
+		return err
+	})
+	//	遍历unHandledTracks 如果存在和mp3Files中匹配的mp3文件就跳过
+	for _, track := range tickedTracks {
+		if flag, _ := isTrackInLocalTracks(track, mp3Files); flag {
 			continue
 		}
-		_, err = io.Copy(dest, origin)
+		//移动到对应的临时文件夹
+		err := os.Rename(filepath.Join(tempBasePath, track.FileName), filepath.Join(basePath, track.FileName))
 		if err != nil {
-			fmt.Println("拷贝失败!: ", err)
-		}
-		err = dest.Close()
-		if err != nil {
-			fmt.Println("关闭dest文件失败: ", err)
-			return
-		}
-		err = origin.Close()
-		if err != nil {
-			fmt.Println("关闭origin文件失败: ", err)
-			return
+			fmt.Println("文件移动失败: ", err)
+			continue
 		}
 	}
 }
@@ -316,7 +365,6 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 	userId := user.ID
 	//获取所有的playlists
 	playLists := getAllPlayLists(sp, ctx, userId)
-
 	//make是返回已经初始化好的对象 不过只能针对于[切片 映射 通道这三种类型] 适用于内置类型
 	//new是返回未初始化的对象0值指针 为对象分配0值内存 但是还未初始化 还是nil 针对自定义类型 (new返回对象的指针 但是该对象还是nil 未初始化)
 	//var tracks =  make([]spotify.SimpleTrack,10)
@@ -325,10 +373,15 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 		success = true
 		return
 	}
+	for _, list := range playLists {
+		playListMap[list.Name] = list.ID
+	}
 
 	//获取本地元数据
 	localMusicMetaData := getLocalMusicMetaData()
-	serializeData := make(map[string][]map[string]string)
+	//读取临时文件夹 放到serializeData中
+	serializeData := loadLocalTempMusic()
+
 	//遍历歌单集合 过滤出本地  `未分类`  和   `分类错误的歌曲(以本地为准) 即能在本地文件夹找到 同时该mp3文件所属父文件夹的名称与当前歌单名称不一致`
 	for _, playList := range playLists {
 		//查询本地元数据 通过key = 歌单名称查询 是否在映射中存在
@@ -349,19 +402,16 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 				// 说明spotify服务器以前同步了元数据 但是本地文件丢失 需要手动将服务器这部分文件元数据删除
 				continue
 			}
-			unHandledTracks := diffTracks(localTracks, tracks)
+			unHandledTracks, _ := diffTracks(localTracks, tracks)
 			if len(unHandledTracks) != 0 {
 				//移动到temp文件夹
 				moveToTemp(unHandledTracks, playList.Name)
-				tempSlice := make([]map[string]string, 0)
-				for _, track := range unHandledTracks {
-					tempSlice = append(tempSlice, map[string]string{
-						"title":  track.Title,
-						"Artist": track.Artist,
-						"Album":  track.Album,
-					})
+				//如果serializeData存在歌单key 则选择加入
+				if data, ok := serializeData[playList.Name]; ok {
+					serializeData[playList.Name] = append(data, unHandledTracks...)
+				} else {
+					serializeData[playList.Name] = unHandledTracks
 				}
-				serializeData[playList.Name] = tempSlice
 			}
 		} else {
 			//本地音乐库不存在该歌单 创建该歌单文件夹
@@ -388,4 +438,43 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 	//打印曲目分类信息 [歌单名称]   [起始序号]   [终止序号]
 	success = true
 	return
+}
+
+// postProcess 接收到退出信号后的后置处理
+func postProcess(uncategorizedData map[string][]util.MP3MetaInfo) {
+	ctx := context.Background()
+	config := &oauth2.Config{
+		ClientID:     spotifyClientID,
+		ClientSecret: spotifyClientSecret,
+		RedirectURL:  redirectURL,
+		Scopes:       scopes,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  spotifyauth.AuthURL,
+			TokenURL: spotifyauth.TokenURL,
+		},
+	}
+	token := <-tokenChan
+	client := config.Client(ctx, token)
+	sp := spotify.New(client)
+	//遍历uncategorizedData临时文件夹
+	for playListName, localTracks := range uncategorizedData {
+		//根据歌单名称 在映射表里查询对应的歌单ID
+		playlistID, ok := playListMap[playListName]
+		if !ok || playlistID == "" {
+			//不存在这样的歌单或者id为空
+			continue
+		}
+		//根据歌单ID 查询spotify在线元数据 得到本地曲目元数据切片
+		tracks, err := getTracksByPlayList(sp, ctx, spotify.SimplePlaylist{ID: playlistID, Name: playListName})
+		if err != nil {
+			//查询歌单曲目失败
+			continue
+		}
+		//已剔除的曲目
+		_, tickedTracks := diffTracks(localTracks, tracks)
+		if len(tickedTracks) != 0 {
+			//将剔除的曲目移动到spotify_local文件夹
+			moveToLocal(tickedTracks, playListName)
+		}
+	}
 }

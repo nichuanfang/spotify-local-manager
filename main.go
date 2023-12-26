@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +42,10 @@ var (
 	authChan = make(chan struct{})
 	//服务停止信号
 	stopChan = make(chan struct{})
+	//系统终止信号  注意一定是缓冲通道  如果不是  发送操作可能会被阻塞(如果没有相应的接收操作,发送操作就会被阻塞)
+	exitSignal chan os.Signal = make(chan os.Signal, 1)
+	//存储token的通道
+	tokenChan = make(chan *oauth2.Token, 1)
 	//认证器
 	auth *spotifyauth.Authenticator
 	//项目配置根目录
@@ -137,8 +143,8 @@ func init() {
 	//处理spotify临时文件夹
 	spotifyLocalTempPath = filepath.Join(currDir, "spotify_local_temp")
 	//如果临时文件夹不存在 则创建
-	_ = os.RemoveAll(spotifyLocalTempPath)
-	_ = os.MkdirAll(spotifyLocalTempPath, os.ModeDir)
+	//os.RemoveAll(spotifyLocalTempPath)
+	os.MkdirAll(spotifyLocalTempPath, os.ModeDir)
 }
 
 // openAuthorizationURL 使用默认浏览器打开授权URL
@@ -240,6 +246,7 @@ func boot() {
 				}
 				break
 			}
+			tokenChan <- principal.Token
 			spotifyClientID = principal.SpotifyClientID
 			spotifyClientSecret = principal.SpotifyClientSecret
 			listenPort = principal.Port
@@ -282,7 +289,16 @@ func callback(server *http.Server) {
 	router.GET("/callback", func(c *gin.Context) {
 		//申请token
 		token := exchangeCodeForToken(c.Writer, c.Request)
-		//序列化token
+		if token == nil {
+			c.Writer.WriteString("无法申请token!")
+			os.Exit(1)
+		}
+		//清空通道
+		for len(tokenChan) > 0 {
+			<-tokenChan
+		}
+		//如果不清空通道 如果通道有token了  此发送操作会被阻塞
+		tokenChan <- token
 		//os.Open()只能打开文件   os.Create()可以新建或覆写文件
 		tokenFile, err := os.Create(tokenPath)
 		if err != nil {
@@ -316,6 +332,8 @@ func callback(server *http.Server) {
 	})
 	//绑定server
 	server.Handler = router
+	//绑定端口
+	server.Addr = ":" + strconv.Itoa(listenPort)
 
 	//启动server
 	go func() {
@@ -344,9 +362,7 @@ func main() {
 
 	wg.Add(2)
 
-	server := &http.Server{
-		Addr: ":9999",
-	}
+	server := &http.Server{}
 	// 启动协程
 	go boot()
 	// 认证协程
@@ -362,7 +378,7 @@ func main() {
 		time.Sleep(3 * time.Second)
 		return
 	} else if err == nil {
-		uncategorizedData := make(map[string][]map[string]string)
+		uncategorizedData := make(map[string][]util.MP3MetaInfo)
 		//	对uncategorizedFile进行反序列化 如果是个空结果 说明没有待分类的曲目;如果不是空 取出结果 开启server 向用户提供端点 使用默认浏览器打开该URL
 		decoder := json.NewDecoder(uncategorizedFile)
 		err := decoder.Decode(&uncategorizedData)
@@ -386,6 +402,20 @@ func main() {
 		})
 		go engine.Run(":" + strconv.Itoa(listenPort))
 		fmt.Printf("处理完成! 请前往如下地址查看分类信息(打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹):\n\nhttp://127.0.0.1:%d/uncategorized\n\n\n\n", listenPort)
-		select {}
+
+		//todo 创建一个信号来监听终止事件  来将分好类的临时曲目移动到对应的spotify_local文件夹中  同时保留文件夹里未分类的临时曲目 序列化uncategorized.json的时候还要包含上一次处理后临时文件夹的未处理曲目
+
+		//os.Interrupt 是一个预定义的常量，表示中断信号，通常由用户按下 Ctrl+C 键触发。
+
+		//注册系统中断和终止信号
+		//syscall.SIGTERM 是一个系统调用信号，表示终止信号，通常由操作系统或其他进程发送给目标进程，要求其正常终止。
+		signal.Notify(exitSignal, os.Interrupt, syscall.SIGTERM)
+		select {
+		//等待终止信号
+		case <-exitSignal:
+			//后置处理
+			postProcess(uncategorizedData)
+			break
+		}
 	}
 }
