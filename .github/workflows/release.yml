@@ -11,6 +11,14 @@ permissions:
 jobs:
   release-windows-amd64:
     name: release-windows-amd64
+    strategy:
+      matrix:
+        os:
+          - windows
+          - linux
+        arch:
+          - amd64
+          - arm64
     runs-on:
       - ubuntu-latest
     steps:
@@ -18,5 +26,5 @@ jobs:
       - uses: wangyoucao577/go-release-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          goos: windows
-          goarch: amd64
+          goos: ${{ matrix.os }}
+          goarch: ${{ matrix.arch }}
