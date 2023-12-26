@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +21,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
+//todo 使用loguru日志框架
+
 var (
 	//spotify客户端id
 	spotifyClientID string
@@ -27,6 +32,8 @@ var (
 	scopes []string
 	//会话标识符
 	state string
+	//gin本地监听端口 默认9999
+	listenPort int
 	//重定向URL
 	redirectURL string
 	//协程同步对象
@@ -55,9 +62,28 @@ type tokenWithContext struct {
 	ctx context.Context
 }
 
+// spotifyPrincipal spotify凭证信息
+type spotifyPrincipal struct {
+
+	// [!Import]
+	// 在序列化和反序列化时 只有首字母大写的字段才可以被序列化和反序列化
+
+	//获取到的 OAuth Token
+	Token *oauth2.Token
+	//客户端ID
+	SpotifyClientID string
+	//客户端密钥
+	SpotifyClientSecret string
+	//监听的端口 对应回调URL
+	Port int
+}
+
+// 返回重定向URL
+func (principal *spotifyPrincipal) getRedirectURL() string {
+	return fmt.Sprintf("http://127.0.0.1/%d/callback", principal.Port)
+}
+
 func init() {
-	spotifyClientID = os.Getenv("SPOTIFY_CLIENT_ID")
-	spotifyClientSecret = os.Getenv("SPOTIFY_CLIENT_SECRET")
 	scopes = []string{
 		spotifyauth.ScopeUserReadPrivate,
 		spotifyauth.ScopeUserLibraryRead,
@@ -66,10 +92,6 @@ func init() {
 		spotifyauth.ScopePlaylistModifyPrivate,
 		spotifyauth.ScopePlaylistModifyPublic,
 	}
-	if spotifyClientID == "" || spotifyClientSecret == "" {
-		panic("spotify客户端ID和客户端密钥都需要设置!")
-	}
-	redirectURL = "http://127.0.0.1:9999/callback"
 	state = util.GenerateRandString(10)
 	//home目录
 	homeDir, err := os.UserHomeDir()
@@ -80,7 +102,7 @@ func init() {
 			fmt.Println("无法创建目录:", err)
 			os.Exit(1)
 		}
-		tokenPath = filepath.Join(spotifyConfigBasePath, "token.json")
+		tokenPath = filepath.Join(spotifyConfigBasePath, "Token.json")
 
 	} else {
 		fmt.Println("获取用户目录错误")
@@ -98,7 +120,23 @@ func init() {
 		//存在go.mod文件 说明是本地开发环境
 		currDir = "D:\\spotify"
 	}
+	//处理spotify本地文件夹
 	spotifyLocalPath = filepath.Join(currDir, "spotify_local")
+	//如果该文件夹不存在 创建一个
+	_, err = os.Stat(spotifyLocalPath)
+	if os.IsNotExist(err) {
+		//	文件夹不存在 创建一个
+		createErr := os.MkdirAll(spotifyLocalPath, os.ModeDir)
+		if createErr != nil {
+			fmt.Println("创建文件夹失败! ", err)
+			os.Exit(1)
+		}
+		fmt.Println("成功创建spotify本地文件夹!")
+	} else if err != nil {
+		fmt.Println("检查文件夹失败: ", err)
+		os.Exit(1)
+	}
+	//处理spotify临时文件夹
 	spotifyLocalTempPath = filepath.Join(currDir, "spotify_local_temp")
 	//如果临时文件夹不存在 则创建
 	_ = os.RemoveAll(spotifyLocalTempPath)
@@ -107,6 +145,7 @@ func init() {
 
 // openAuthorizationURL 使用默认浏览器打开授权URL
 func openAuthorizationURL() {
+	fmt.Printf("请去 https://developer.spotify.com/dashboard 设置里添加回调地址: %s\n", redirectURL)
 	authorizationURL := generateAuthorizationURL()
 	//调用系统指令使用默认浏览器打开该URL
 	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", authorizationURL)
@@ -114,6 +153,69 @@ func openAuthorizationURL() {
 	if err != nil {
 		fmt.Println(err.Error())
 	}
+}
+
+func initOauthConfig(clientID string, clientSecret string, port int) {
+	//todo 接受用户输入spotifyClientID和spotifyClientSecret和监听端口  认证成功之后将它存储到token.json
+	// 生成 回调地址  http:// 127.0.0.1:{listenPort}/callback 提醒用户去 https://developer.spotify.com/dashboard 添加该回调URL  如果之后授权发现回调地址不可用 说明添加失败 还要提醒用户添加回调URL
+	//如果tokenPath不存在 就要求用户输入这两个值 ; 如果存在 在反序列号token.json成功之后 将对应的值设置到客户端ID,密钥,端口中
+	reader := bufio.NewReader(os.Stdin)
+	if clientID != "" {
+		spotifyClientID = clientID
+	} else {
+		// 获取 Spotify 客户端 ID
+		for {
+			fmt.Print("请输入 Spotify 客户端 ID：")
+			clientID, _ := reader.ReadString('\n')
+			if strings.TrimSpace(clientID) == "" {
+				fmt.Println("客户端ID必填!")
+				continue
+			}
+			spotifyClientID = strings.TrimSpace(clientID)
+			break
+		}
+	}
+	if clientSecret != "" {
+		spotifyClientSecret = clientSecret
+	} else {
+		for {
+			// 获取 Spotify 客户端密钥
+			fmt.Print("请输入 Spotify 客户端密钥：")
+			clientSecret, _ := reader.ReadString('\n')
+			if strings.TrimSpace(clientSecret) == "" {
+				fmt.Println("客户端密钥必填!")
+				continue
+			}
+			spotifyClientSecret = strings.TrimSpace(clientSecret)
+			break
+		}
+	}
+	if port != 0 {
+		listenPort = port
+		redirectURL = fmt.Sprintf("http://127.0.0.1:%d/callback", listenPort)
+	} else {
+		// 获取本地监听端口
+		for {
+			fmt.Print("请输入本地监听端口（默认为 9999）：")
+			port, _ := reader.ReadString('\n')
+			inputPort := strings.TrimSpace(port)
+			if inputPort == "" {
+				listenPort = 9999
+				redirectURL = fmt.Sprintf("http://127.0.0.1:%d/callback", listenPort)
+				break
+			}
+			listenPort, err := strconv.Atoi(inputPort)
+			if err != nil {
+				fmt.Println("端口必须为整数!")
+				continue
+			} else if util.IsPortInUse(listenPort) {
+				fmt.Printf("端口: %v已被占用,请更换!", listenPort)
+			}
+			redirectURL = fmt.Sprintf("http://127.0.0.1:%d/callback", listenPort)
+			break
+		}
+	}
+	openAuthorizationURL()
 }
 
 // 启动协程
@@ -128,25 +230,32 @@ func boot() {
 		if err == nil {
 			defer tokenFile.Close()
 			//token存在  则读取token.json 反序列化到内存中  不用OAuth2授权
-			var token = new(oauth2.Token)
+			principal := new(spotifyPrincipal)
 			decoder := json.NewDecoder(tokenFile)
-			decoder.Decode(token)
+			err := decoder.Decode(principal)
 			if err != nil {
 				fmt.Println("无法解码token.json: ", err)
 				os.Exit(1)
+			} else if principal.Token == nil {
+				if principal.SpotifyClientID != "" {
+					initOauthConfig(principal.SpotifyClientID, principal.SpotifyClientSecret, principal.Port)
+				} else {
+					initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
+				}
+				break
 			}
 			ctx := context.Background()
 			config := &oauth2.Config{
-				ClientID:     spotifyClientID,
-				ClientSecret: spotifyClientSecret,
-				RedirectURL:  redirectURL,
+				ClientID:     principal.SpotifyClientID,
+				ClientSecret: principal.SpotifyClientSecret,
+				RedirectURL:  principal.getRedirectURL(),
 				Scopes:       scopes,
 				Endpoint: oauth2.Endpoint{
 					AuthURL:  spotifyauth.AuthURL,
 					TokenURL: spotifyauth.TokenURL,
 				},
 			}
-			client := config.Client(ctx, token)
+			client := config.Client(ctx, principal.Token)
 			sp := spotify.New(client)
 			//直接进行业务处理
 			success := handle(ctx, sp)
@@ -156,10 +265,9 @@ func boot() {
 				break
 			}
 		} else {
-			//1. 如果token.json不存在就发起授权的请求
-			//		1.1发起打开授权URL的指令 最终会进入准备了回调接口的协程
-			//     1.2 将获取到的token序列化到token.json中
-			openAuthorizationURL()
+			//. Token.json不存在
+			initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
+			break
 		}
 	}
 }
@@ -181,11 +289,22 @@ func callback(server *http.Server) {
 			fmt.Println("无法创建token.json文件")
 			os.Exit(1)
 		}
-		defer tokenFile.Close()
 		encoder := json.NewEncoder(tokenFile)
-		err = encoder.Encode(token)
+
+		err = encoder.Encode(spotifyPrincipal{
+			Token:               token,
+			SpotifyClientID:     spotifyClientID,
+			SpotifyClientSecret: spotifyClientSecret,
+			Port:                listenPort,
+		})
+		//err = encoder.Encode(Token)
 		if err != nil {
 			fmt.Println("无法写入文件: ", err)
+			os.Exit(1)
+		}
+		err = tokenFile.Close()
+		if err != nil {
+			fmt.Println("无法关闭文件: ", err)
 			os.Exit(1)
 		}
 		client := auth.Client(c, token)

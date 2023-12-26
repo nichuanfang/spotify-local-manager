@@ -35,7 +35,7 @@ func generateAuthorizationURL() (authorizationURL string) {
 func exchangeCodeForToken(w gin.ResponseWriter, r *http.Request) *oauth2.Token {
 	token, err := auth.Token(r.Context(), state, r)
 	if err != nil {
-		http.Error(w, "Could't get token", http.StatusInternalServerError)
+		http.Error(w, "Could't get Token", http.StatusInternalServerError)
 		return nil
 	}
 	// 成功获取token后的关闭标签页
@@ -68,7 +68,6 @@ func getLocalMusicMetaData() map[string][]util.MP3MetaInfo {
 		if info.IsDir() {
 			res[info.Name()] = make([]util.MP3MetaInfo, 0)
 		} else if strings.HasSuffix(info.Name(), ".mp3") {
-			//todo 读取mp3文件元信息 获取歌曲标题 歌手 专辑名称 方便之后在同步的时候根据这些元信息校对
 			mp3, err := util.ExtractMp3FromPath(path)
 			if err != nil {
 				//当前mp3无法处理 直接跳过
@@ -239,20 +238,14 @@ func diffTracks(localTracks []util.MP3MetaInfo, tracks []util.MP3MetaInfo) []uti
 	//如果tracks中的曲目 在localTracks中不存在  说明该文件属于分类错误 将这些文件过滤出来
 	//localTracks-tracks剩余的曲目是需要分类的
 	// 在spotifyLocalTemp文件夹创建歌单分类文件夹 将过滤出的这些曲目移动过去
-
-	finalTracks := make([]util.MP3MetaInfo, 0)
 	for _, track := range tracks {
-		//todo 如果文件名为空 还需要去spotify_local文件夹去查找
 		if isTrackInLocalTracks(track, localTracks) {
 			//从localTracks中移除该曲目
 			localTracks = removeTrack(localTracks, track)
-		} else {
-			//todo  属于其他歌单的曲目 添加到过滤好的结果中 文件名待定
-			//finalTracks = append(finalTracks, track)
 		}
 	}
 	//将finalTracks+localTracks 汇合成一个新的将finalTracks
-	return append(finalTracks, localTracks...)
+	return localTracks
 }
 
 func moveToTemp(unHandledTracks []util.MP3MetaInfo, playListName string) {
