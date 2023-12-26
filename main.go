@@ -385,7 +385,7 @@ func main() {
 			c.Writer.Write(marshal)
 		})
 		go engine.Run(":" + strconv.Itoa(listenPort))
-		fmt.Printf("处理完成! 请前往如下地址查看分类信息:\nhttp://127.0.0.1:%d/uncategorized\n\n\n\n", listenPort)
+		fmt.Printf("处理完成! 请前往如下地址查看分类信息(打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹):\n\nhttp://127.0.0.1:%d/uncategorized\n\n\n\n", listenPort)
 		select {}
 	}
 }
