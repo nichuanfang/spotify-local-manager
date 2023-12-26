@@ -15,10 +15,10 @@ jobs:
       matrix:
         os:
           - windows
-          - linux
+        #          - linux
         arch:
           - amd64
-          - arm64
+    #          - arm64
     runs-on:
       - ubuntu-latest
     steps:
