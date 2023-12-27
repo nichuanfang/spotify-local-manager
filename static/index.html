@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JSON VIEW</title>
+</head>
+
+<body>
+<div id="root"></div>
+
+<script type="text/javascript" src="static/js/jsonview.js"></script>
+<script type="text/javascript">
+    let intervalId; // 用于存储定时器的 ID
+
+    function fetchDataAndRender() {
+        fetch('http://127.0.0.1:9999/uncategorized')
+            .then((res) => {
+                return res.text();
+            })
+            .then((data) => {
+                const previousData = sessionStorage.getItem('jsonData');
+                if (previousData !== data) {
+                    sessionStorage.setItem('jsonData', data);
+
+                    const rootElement = document.getElementById('root');
+                    rootElement.innerHTML = '';
+
+                    if (data === '{}') {
+                        const textNode = document.createTextNode('已分类完成！');
+                        rootElement.appendChild(textNode);
+
+                        // 如果分类已完成，停止定时请求
+                        clearInterval(intervalId);
+                    } else {
+                        const tree = jsonview.create(data);
+                        jsonview.render(tree, rootElement);
+                        jsonview.expand(tree);
+                    }
+                }
+            })
+            .catch((err) => {
+                console.log(err);
+            });
+    }
+
+    // 第一次立即获取数据并渲染
+    fetchDataAndRender();
+
+    // 每隔 5 秒获取数据并重新渲染
+    intervalId = setInterval(fetchDataAndRender, 5000);
+</script>
+</body>
+</html>

@@ -5,15 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,10 +41,8 @@ var (
 	authChan = make(chan struct{})
 	//服务停止信号
 	stopChan = make(chan struct{})
-	//系统终止信号  注意一定是缓冲通道  如果不是  发送操作可能会被阻塞(如果没有相应的接收操作,发送操作就会被阻塞)
-	exitSignal chan os.Signal = make(chan os.Signal, 1)
 	//存储token的通道
-	tokenChan = make(chan *oauth2.Token, 1)
+	tokenChan = make(chan *oauth2.Token)
 	//认证器
 	auth *spotifyauth.Authenticator
 	//项目配置根目录
@@ -112,6 +109,13 @@ func init() {
 		fmt.Println("获取用户目录错误")
 		os.Exit(1)
 	}
+	// 禁用控制台颜色，将日志写入文件时不需要控制台颜色。
+	gin.DisableConsoleColor()
+	// 记录到文件。
+	_ = os.Remove(fmt.Sprintf("%s/gin.log", spotifyConfigBasePath))
+	f, _ := os.Create(fmt.Sprintf("%s/gin.log", spotifyConfigBasePath))
+	gin.DefaultWriter = io.MultiWriter(f)
+
 	//根据执行exe的目录来推断spotify_local和spotify_local_temp
 	currDir, err := os.Getwd()
 	if err != nil {
@@ -256,7 +260,9 @@ func boot() {
 				}
 				break
 			}
-			tokenChan <- principal.Token
+			go func() {
+				tokenChan <- principal.Token
+			}()
 			spotifyClientID = principal.SpotifyClientID
 			spotifyClientSecret = principal.SpotifyClientSecret
 			listenPort = principal.Port
@@ -303,12 +309,7 @@ func callback(server *http.Server) {
 			c.Writer.WriteString("无法申请token!")
 			os.Exit(1)
 		}
-		//清空通道
-		for len(tokenChan) > 0 {
-			<-tokenChan
-		}
-		//如果不清空通道 如果通道有token了  此发送操作会被阻塞
-		tokenChan <- token
+		go func() { tokenChan <- token }()
 		//os.Open()只能打开文件   os.Create()可以新建或覆写文件
 		tokenFile, err := os.Create(tokenPath)
 		if err != nil {
@@ -401,26 +402,53 @@ func main() {
 			time.Sleep(3 * time.Second)
 			return
 		}
+
 		engine := gin.Default()
-		engine.GET("/uncategorized", func(c *gin.Context) {
-			//todo 监听uncategorized.json 文件变化  如果有改动就要更新此接口
-			marshal, err := json.Marshal(uncategorizedData)
-			if err != nil {
-				c.Writer.WriteString("json marshal failed: " + err.Error())
-				return
-			}
-			c.Writer.Write(marshal)
-		})
-		go engine.Run(":" + strconv.Itoa(listenPort))
-		fmt.Print("处理完成! 请打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹\n\n")
-		openURL(fmt.Sprintf("http://127.0.0.1:%d/uncategorized", listenPort))
 		//创建一个信号来监听终止事件  来将分好类的临时曲目移动到对应的spotify_local文件夹中  同时保留文件夹里未分类的临时曲目 序列化uncategorized.json的时候还要包含上一次处理后临时文件夹的未处理曲目
-
 		//os.Interrupt 是一个预定义的常量，表示中断信号，通常由用户按下 Ctrl+C 键触发。
-
 		//注册系统中断和终止信号
 		//syscall.SIGTERM 是一个系统调用信号，表示终止信号，通常由操作系统或其他进程发送给目标进程，要求其正常终止。
-		signal.Notify(exitSignal, os.Interrupt, syscall.SIGTERM)
+		leftTracksChan := make(chan map[string][]util.MP3MetaInfo)
+
+		engine.Static("./static", "static")
+
+		// 将根路由指定为静态文件
+		engine.GET("/", func(c *gin.Context) {
+			c.File("./static/index.html")
+		})
+
+		tempData := make(map[string][]util.MP3MetaInfo)
+		//查询分类信息
+		engine.GET("/uncategorized", func(c *gin.Context) {
+			select {
+			case data := <-leftTracksChan:
+				tempData = data
+				marshal, err := json.Marshal(data)
+				if err != nil {
+					c.Writer.WriteString("json marshal failed: " + err.Error())
+					return
+				}
+				c.Writer.Write(marshal)
+			default:
+				marshal, err := json.Marshal(tempData)
+				if err != nil {
+					c.Writer.WriteString("json marshal failed: " + err.Error())
+					return
+				}
+				c.Writer.Write(marshal)
+			}
+		})
+
+		go func() {
+			engine.Run(":" + strconv.Itoa(listenPort))
+		}()
+		fmt.Print("请打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹\n\n")
+		openURL(fmt.Sprintf("http://127.0.0.1:%d", listenPort))
+
+		//终止信号
+		exitSignal := make(chan struct{})
+		go getCategorizeStat(uncategorizedData, leftTracksChan, exitSignal)
+
 		select {
 		//等待终止信号
 		case <-exitSignal:

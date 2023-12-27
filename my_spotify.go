@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nichuanfang/spotify-local-manager/util"
@@ -371,6 +372,15 @@ func moveToLocal(tickedTracks []util.MP3MetaInfo, playListName string) {
 	}
 }
 
+func closeSpotifyProcess() error {
+	cmd := exec.Command("taskkill", "/IM", "Spotify.exe", "/F")
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("关闭 Spotify 进程失败：%v", err)
+	}
+	return nil
+}
+
 // handle 业务处理方法
 func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 	fmt.Println("处理中...")
@@ -463,6 +473,62 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 	return
 }
 
+func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTracksChan chan map[string][]util.MP3MetaInfo, exitSignal chan struct{}) {
+	ctx := context.Background()
+	config := &oauth2.Config{
+		ClientID:     spotifyClientID,
+		ClientSecret: spotifyClientSecret,
+		RedirectURL:  redirectURL,
+		Scopes:       scopes,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  spotifyauth.AuthURL,
+			TokenURL: spotifyauth.TokenURL,
+		},
+	}
+	token := <-tokenChan
+	client := config.Client(ctx, token)
+	sp := spotify.New(client)
+	for {
+		//todo 每完成一个歌单的分类 就减少一个歌单的查询
+		newData := make(map[string][]util.MP3MetaInfo)
+		//遍历uncategorizedData临时文件夹
+		for playListName, localTracks := range uncategorizedData {
+			//根据歌单名称 在映射表里查询对应的歌单ID
+			playlistID, ok := playListMap[playListName]
+			if !ok || playlistID == "" {
+				//不存在这样的歌单或者id为空
+				continue
+			}
+			//根据歌单ID 查询spotify在线元数据 得到本地曲目元数据切片
+			tracks, err := getTracksByPlayList(sp, ctx, spotify.SimplePlaylist{ID: playlistID, Name: playListName})
+			if err != nil {
+				//查询歌单曲目失败 可能是受到了rate limit
+				fmt.Println("查询歌单曲目元信息失败: ", err)
+				fmt.Println("休眠30秒...")
+				time.Sleep(25 * time.Second)
+				break
+			}
+			//已剔除的曲目
+			leftTracks, _ := diffTracks(localTracks, tracks)
+			if len(leftTracks) != 0 {
+				newData[playListName] = leftTracks
+			}
+		}
+		if len(newData) == 0 {
+			fmt.Println("分类已完成!")
+			leftTracksChan <- newData
+			exitSignal <- struct{}{}
+			go func() {
+				tokenChan <- token
+			}()
+			break
+		}
+		leftTracksChan <- newData
+		time.Sleep(5 * time.Second)
+	}
+
+}
+
 // postProcess 接收到退出信号后的后置处理
 func postProcess(uncategorizedData map[string][]util.MP3MetaInfo) {
 	ctx := context.Background()
@@ -500,13 +566,4 @@ func postProcess(uncategorizedData map[string][]util.MP3MetaInfo) {
 			moveToLocal(tickedTracks, playListName)
 		}
 	}
-}
-
-func closeSpotifyProcess() error {
-	cmd := exec.Command("taskkill", "/IM", "Spotify.exe", "/F")
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("关闭 Spotify 进程失败：%v", err)
-	}
-	return nil
 }
