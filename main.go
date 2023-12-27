@@ -341,7 +341,10 @@ func callback(server *http.Server) {
 			stopChan <- struct{}{}
 		}
 	})
-	initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
+	_, err := os.Open(tokenPath)
+	if err != nil {
+		initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
+	}
 	//绑定server
 	server.Handler = router
 	//绑定端口
