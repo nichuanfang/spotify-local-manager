@@ -236,7 +236,6 @@ func initOauthConfig(clientID string, clientSecret string, port int) {
 			break
 		}
 	}
-	openAuthorizationURL()
 }
 
 // 启动协程
@@ -258,12 +257,8 @@ func boot() {
 				fmt.Println("无法解码token.json: ", err)
 				os.Exit(1)
 			} else if principal.Token == nil {
-				if principal.SpotifyClientID != "" {
-					initOauthConfig(principal.SpotifyClientID, principal.SpotifyClientSecret, principal.Port)
-				} else {
-					initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
-				}
-				break
+				fmt.Println("无效的token.json!")
+				os.Exit(1)
 			}
 			go func() {
 				tokenChan <- principal.Token
@@ -294,7 +289,7 @@ func boot() {
 			}
 		} else {
 			//. Token.json不存在
-			initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
+			openAuthorizationURL()
 			break
 		}
 	}
@@ -346,6 +341,7 @@ func callback(server *http.Server) {
 			stopChan <- struct{}{}
 		}
 	})
+	initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
 	//绑定server
 	server.Handler = router
 	//绑定端口
@@ -362,6 +358,7 @@ func callback(server *http.Server) {
 	// 服务器成功启动后延时1秒发送通知
 	time.Sleep(1 * time.Second)
 	fmt.Println("Auth服务成功启动!")
+
 	//服务器成功启动 通知业务协程已准备就绪
 	authChan <- struct{}{}
 

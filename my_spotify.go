@@ -128,7 +128,7 @@ func getAllPlayLists(sp *spotify.Client, ctx context.Context, userId string) []s
 	playlistsForUser, err := sp.GetPlaylistsForUser(ctx, userId)
 	if err != nil {
 		fmt.Println("歌单查询失败: ", err)
-		return make([]spotify.SimplePlaylist, 0)
+		os.Exit(1)
 	}
 	total := playlistsForUser.Total
 	if total == 0 {
@@ -147,7 +147,7 @@ func getAllPlayLists(sp *spotify.Client, ctx context.Context, userId string) []s
 		currPlaylists := getPlaylistsForUser.Playlists
 		if err != nil {
 			fmt.Println("查询歌单失败: ", err)
-			continue
+			os.Exit(1)
 		} else if len(currPlaylists) == 0 {
 			break
 		}
@@ -474,6 +474,11 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 }
 
 func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTracksChan chan map[string][]util.MP3MetaInfo, exitSignal chan struct{}) {
+	//创建uncategorizedData的深拷贝对象
+	copyUncategorizedData := make(map[string][]util.MP3MetaInfo)
+	for k, v := range uncategorizedData {
+		copyUncategorizedData[k] = v
+	}
 	ctx := context.Background()
 	config := &oauth2.Config{
 		ClientID:     spotifyClientID,
@@ -493,7 +498,7 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 		//每完成一个歌单的分类 就减少一个歌单的查询
 		newData := make(map[string][]util.MP3MetaInfo)
 		//遍历uncategorizedData临时文件夹
-		for playListName, localTracks := range uncategorizedData {
+		for playListName, localTracks := range copyUncategorizedData {
 			//根据歌单名称 在映射表里查询对应的歌单ID
 			playlistID, ok := playListMap[playListName]
 			if !ok || playlistID == "" {
@@ -505,9 +510,7 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 			if err != nil {
 				//查询歌单曲目失败 可能是受到了rate limit
 				fmt.Println("查询歌单曲目元信息失败: ", err)
-				fmt.Println("休眠30秒...")
-				time.Sleep(25 * time.Second)
-				break
+				os.Exit(1)
 			}
 			//已剔除的曲目
 
@@ -533,7 +536,7 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 			break
 		}
 		leftTracksChan <- newData
-		time.Sleep(3 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 
 }
