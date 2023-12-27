@@ -25,11 +25,16 @@
                     rootElement.innerHTML = '';
 
                     if (data === '{}') {
-                        const textNode = document.createTextNode('已分类完成！');
+                        const textNode = document.createTextNode('已分类完成！\n3秒后此页面关闭');
                         rootElement.appendChild(textNode);
 
                         // 如果分类已完成，停止定时请求
                         clearInterval(intervalId);
+
+                        // 延迟 3 秒后关闭页面
+                        setTimeout(() => {
+                            window.close();
+                        }, 3000);
                     } else {
                         const tree = jsonview.create(data);
                         jsonview.render(tree, rootElement);
@@ -42,8 +47,18 @@
             });
     }
 
-    // 第一次立即获取数据并渲染
-    fetchDataAndRender();
+    // 检查 sessionStorage 中是否存在数据
+    const previousData = sessionStorage.getItem('jsonData');
+    if (previousData) {
+        // 如果存在数据，则直接渲染页面
+        const rootElement = document.getElementById('root');
+        const tree = jsonview.create(previousData);
+        jsonview.render(tree, rootElement);
+        jsonview.expand(tree);
+    } else {
+        // 如果不存在数据，则进行一次初始数据请求
+        fetchDataAndRender();
+    }
 
     // 每隔 5 秒获取数据并重新渲染
     intervalId = setInterval(fetchDataAndRender, 5000);

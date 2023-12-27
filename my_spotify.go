@@ -488,8 +488,9 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 	token := <-tokenChan
 	client := config.Client(ctx, token)
 	sp := spotify.New(client)
+
 	for {
-		//todo 每完成一个歌单的分类 就减少一个歌单的查询
+		//每完成一个歌单的分类 就减少一个歌单的查询
 		newData := make(map[string][]util.MP3MetaInfo)
 		//遍历uncategorizedData临时文件夹
 		for playListName, localTracks := range uncategorizedData {
@@ -509,10 +510,18 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 				break
 			}
 			//已剔除的曲目
+
 			leftTracks, _ := diffTracks(localTracks, tracks)
 			if len(leftTracks) != 0 {
 				newData[playListName] = leftTracks
+			} else {
+				//	此歌单处理完毕
+				delete(uncategorizedData, playListName)
 			}
+			// 每剔除一首 就移动一首
+			//if len(tickedTracks)!=0{
+			//	moveToLocal(tickedTracks,playListName)
+			//}
 		}
 		if len(newData) == 0 {
 			fmt.Println("分类已完成!")
@@ -524,7 +533,7 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 			break
 		}
 		leftTracksChan <- newData
-		time.Sleep(5 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 
 }

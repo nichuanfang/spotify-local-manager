@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,6 +54,10 @@ var (
 	spotifyLocalPath string
 	//spotify本地临时文件(存放未分类mp3)所在目录
 	spotifyLocalTempPath string
+	//go:embed static/index.html
+	htmlFile embed.FS
+	//go:embed static/js/jsonview.js
+	jsFile embed.FS
 )
 
 // 携带上下文的token
@@ -410,32 +415,44 @@ func main() {
 		//syscall.SIGTERM 是一个系统调用信号，表示终止信号，通常由操作系统或其他进程发送给目标进程，要求其正常终止。
 		leftTracksChan := make(chan map[string][]util.MP3MetaInfo)
 
-		engine.Static("./static", "static")
+		tempData := make(map[string][]util.MP3MetaInfo)
 
-		// 将根路由指定为静态文件
-		engine.GET("/", func(c *gin.Context) {
-			c.File("./static/index.html")
+		//// 将根路由指定为静态文件
+		//engine.GET("/", func(c *gin.Context) {
+		//	c.File("./static/index.html")
+		//})
+
+		// 路由到 jsonview.js
+		engine.GET("static/js/jsonview.js", func(c *gin.Context) {
+			content, err := jsFile.ReadFile("static/js/jsonview.js")
+			if err != nil {
+				c.String(http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+			c.Data(http.StatusOK, "application/javascript", content)
 		})
 
-		tempData := make(map[string][]util.MP3MetaInfo)
+		// 路由到 index.html
+		engine.GET("/", func(c *gin.Context) {
+			content, err := htmlFile.ReadFile("static/index.html")
+			if err != nil {
+				c.String(http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+			c.Data(http.StatusOK, "text/html; charset=utf-8", content)
+		})
+
 		//查询分类信息
 		engine.GET("/uncategorized", func(c *gin.Context) {
 			select {
 			case data := <-leftTracksChan:
 				tempData = data
-				marshal, err := json.Marshal(data)
-				if err != nil {
-					c.Writer.WriteString("json marshal failed: " + err.Error())
-					return
-				}
-				c.Writer.Write(marshal)
+				c.JSON(200, tempData)
 			default:
-				marshal, err := json.Marshal(tempData)
-				if err != nil {
-					c.Writer.WriteString("json marshal failed: " + err.Error())
-					return
+				if len(tempData) == 0 {
+					tempData = <-leftTracksChan
 				}
-				c.Writer.Write(marshal)
+				c.JSON(200, tempData)
 			}
 		})
 
