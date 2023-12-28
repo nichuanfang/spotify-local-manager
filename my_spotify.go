@@ -593,7 +593,7 @@ func postProcess(tickedTracksFilesChan chan []map[string]string) {
 			}
 		}
 	}
-	if !needSpotifyRecover {
+	if needSpotifyRecover {
 		// 获取 Spotify 进程的详细信息
 		if spotifyAppPath == "" {
 			fmt.Println("Spotify.exe process is not found")
