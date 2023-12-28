@@ -371,6 +371,7 @@ func moveToLocal(tickedTracks []util.MP3MetaInfo, playListName string) {
 	}
 }
 
+// 关闭spotify进程
 func closeSpotifyProcess() error {
 	cmd := exec.Command("taskkill", "/IM", "Spotify.exe", "/F")
 	err := cmd.Run()
@@ -378,6 +379,27 @@ func closeSpotifyProcess() error {
 		return fmt.Errorf("关闭 Spotify 进程失败：%v", err)
 	}
 	return nil
+}
+
+// 获取进程的详细信息
+func getProcessInfo(processName string) (string, error) {
+	cmd := exec.Command("wmic", "process", "where", "name='"+processName+"'", "get", "ExecutablePath", "/format:list")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+// 从进程详细信息中提取文件路径
+func extractFilePath(processInfo string) string {
+	lines := strings.Split(processInfo, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "ExecutablePath=") {
+			return strings.TrimPrefix(line, "ExecutablePath=")
+		}
+	}
+	return ""
 }
 
 // handle 业务处理方法
@@ -562,12 +584,26 @@ func postProcess(tickedTracksFilesChan chan []map[string]string) {
 		dest := item["dest"]
 		err := os.Rename(source, dest)
 		if err != nil {
+			needSpotifyRecover = true
 			_ = closeSpotifyProcess()
 			err = os.Rename(source, dest)
 			if err != nil {
 				fmt.Println("移动文件失败: ", err)
 				os.Exit(1)
 			}
+		}
+	}
+	if !needSpotifyRecover {
+		// 获取 Spotify 进程的详细信息
+		if spotifyAppPath == "" {
+			fmt.Println("Spotify.exe process is not found")
+			return
+		}
+		cmd := exec.Command(spotifyAppPath)
+		err := cmd.Start()
+		if err != nil {
+			fmt.Println("打开Spotify失败: ", err)
+			return
 		}
 	}
 

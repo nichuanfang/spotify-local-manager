@@ -50,10 +50,14 @@ var (
 	spotifyConfigBasePath string
 	//token文件所在目录
 	tokenPath string
+	//spotify应用程序的安装目录
+	spotifyAppPath string
 	//spotify本地文件所在目录
 	spotifyLocalPath string
 	//spotify本地临时文件(存放未分类mp3)所在目录
 	spotifyLocalTempPath string
+	//spotify客户端是否需要重启
+	needSpotifyRecover = false
 	//go:embed static/index.html
 	htmlFile embed.FS
 	//go:embed static/js/jsonview.js
@@ -238,6 +242,35 @@ func initOauthConfig(clientID string, clientSecret string, port int) {
 	}
 }
 
+// 读取spotify.exe的协程
+func syncSpotifyAppPath(ctx context.Context) {
+
+	//轮询查看是否有Spotify.exe 如果有就设置为全局变量 并退出
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			//主线程强制退出
+			break loop
+		default:
+			//查询是否有Spotify.exe进程 如果有 则设置为全局变量
+			spotifyInfo, err := getProcessInfo("Spotify.exe")
+			if err != nil {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			spotifyPath := extractFilePath(spotifyInfo)
+			if spotifyPath != "" {
+				//更新全局变量
+				spotifyAppPath = strings.ReplaceAll(spotifyPath, "\r", "")
+				break loop
+			} else {
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}
+}
+
 // 启动协程
 func boot() {
 	defer wg.Done()
@@ -317,14 +350,12 @@ func callback(server *http.Server) {
 			os.Exit(1)
 		}
 		encoder := json.NewEncoder(tokenFile)
-
 		err = encoder.Encode(spotifyPrincipal{
 			Token:               token,
 			SpotifyClientID:     spotifyClientID,
 			SpotifyClientSecret: spotifyClientSecret,
 			Port:                listenPort,
 		})
-		//err = encoder.Encode(Token)
 		if err != nil {
 			fmt.Println("无法写入文件: ", err)
 			os.Exit(1)
@@ -375,10 +406,13 @@ func callback(server *http.Server) {
 }
 
 func main() {
-
 	wg.Add(2)
 
 	server := &http.Server{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	//同步Spotify.exe的路径
+	go syncSpotifyAppPath(ctx)
 	// 启动协程
 	go boot()
 	// 认证协程
@@ -386,7 +420,7 @@ func main() {
 	// 等待两个协程执行完毕
 	wg.Wait()
 	//数据处理完成
-
+	cancel()
 	//如果生成的uncategorized.json不是空的json串 则开启一个服务 去提供访问
 	uncategorizedFile, err := os.Open(filepath.Join(spotifyConfigBasePath, "uncategorized.json"))
 	if os.IsNotExist(err) {
