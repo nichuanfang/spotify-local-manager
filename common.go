@@ -18,6 +18,7 @@ func contains(slice []string, element string) bool {
 
 // handleError 错误处理函数
 func handleError(err error) error {
+	//造轮子
 	if err != nil {
 		fmt.Println("err:  ", err.Error())
 	}
