@@ -48,7 +48,7 @@ var (
 	auth *spotifyauth.Authenticator
 	//项目配置根目录
 	spotifyConfigBasePath string
-	//token文件所在目录
+	//token文件 所在目录
 	tokenPath string
 	//spotify应用程序的安装目录
 	spotifyAppPath string
