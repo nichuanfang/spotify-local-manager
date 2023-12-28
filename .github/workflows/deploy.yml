@@ -22,7 +22,7 @@ jobs:
     runs-on:
       - ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
@@ -33,6 +33,10 @@ jobs:
           kind: default
           tag-pattern: v*
           current-tag: ${{ github.ref_name }}
+          include-non-scoped: false
+
+      - name: Print the release note
+        run: echo "${{ steps.gen_note.outputs.summary }}"
 
       - name: Create a new release note
         uses: softprops/action-gh-release@v1
