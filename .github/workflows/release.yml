@@ -1,0 +1,71 @@
+name: release executable file
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  create-release-note:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Test git log
+        run: |
+          git tag --list
+          PREVIOUS_TAG=$(git tag --sort=-creatordate --list "v*" | sed -n 2p)
+          echo "$PREVIOUS_TAG"
+          echo "ref_name"
+          git log --oneline --pretty=tformat:"%s by @%an in %h" ${PREVIOUS_TAG}...${{ github.ref_name }}
+          echo "ref"
+          git log --oneline --pretty=tformat:"%s by @%an in %h" ${PREVIOUS_TAG}...${{ github.ref }}
+      - name: Generated content
+        uses: yuk1ty/conventional-release-note@v1.1.1
+        id: gen_note
+        with:
+          kind: default
+          tag-pattern: v*
+          current-tag: ${{ github.ref_name }}
+          include-non-scoped: false
+      - name: Print the release note
+        run: echo "${{ steps.gen_note.outputs.summary }}"
+      - name: Create a new release note
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: ${{ steps.gen_note.outputs.summary }}
+          draft: false
+          prerelease: false
+  
+  
+  release-windows-amd64:
+    name: release-windows-amd64
+    strategy:
+      matrix:
+        os:
+          - windows
+        #          - linux
+        arch:
+          - amd64
+    #          - arm64
+    runs-on:
+      - ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: wangyoucao577/go-release-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.os }}
+          goarch: ${{ matrix.arch }}
