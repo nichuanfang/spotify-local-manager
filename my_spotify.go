@@ -242,6 +242,7 @@ func getTracksByPlayList(sp *spotify.Client, ctx context.Context, playList spoti
 // isTrackInLocalTracks 判断spotify已收录元信息的曲目是否存在于本地库
 func isTrackInLocalTracks(track util.MP3MetaInfo, localTracks []util.MP3MetaInfo) (flag bool, filename string) {
 
+	//	hahaha
 loop:
 	for _, localTrack := range localTracks {
 		if util.EvaluateSimilar(localTrack.Artist, track.Artist) &&
