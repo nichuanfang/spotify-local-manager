@@ -33,7 +33,7 @@ jobs:
           kind: default
           tag-pattern: v*
           current-tag: ${{ github.ref_name }}
-          include-non-scoped: false
+          include-non-scoped: true
 
       - name: Print the release note
         run: echo "${{ steps.gen_note.outputs.summary }}"
