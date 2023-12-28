@@ -1,6 +1,9 @@
 name: update_release_draft.yml
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     types: [ opened, reopened, synchronize ]
 
