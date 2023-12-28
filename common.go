@@ -1,9 +1,19 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // pass	此为仿照python的pass方便调试 写的占位符函数 本身没有任何功能
 func pass() {
+}
+
+func contains(slice []string, element string) bool {
+	index := sort.Search(len(slice), func(i int) bool {
+		return slice[i] >= element
+	})
+	return index < len(slice) && slice[index] == element
 }
 
 // handleError 错误处理函数

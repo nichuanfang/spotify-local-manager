@@ -551,8 +551,14 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 // 移动文件
 func postProcess(tickedTracksFilesChan chan []map[string]string) {
 	data := <-tickedTracksFilesChan
+	sourceRecover := make([]string, 0)
 	for _, item := range data {
 		source := item["source"]
+		if contains(sourceRecover, source) {
+			continue
+		} else {
+			sourceRecover = append(sourceRecover, source)
+		}
 		dest := item["dest"]
 		err := os.Rename(source, dest)
 		if err != nil {
