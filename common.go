@@ -5,7 +5,7 @@ import (
 	"sort"
 )
 
-// pass	此为仿照python的pass方便调试 写的占位符函数 本身没有任何功能
+// pass	此为仿照python的pass方便调试 写的占位符函数 本身没有任何功能 可能的结果
 func pass() {
 }
 
