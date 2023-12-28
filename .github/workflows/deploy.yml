@@ -9,37 +9,6 @@ permissions:
   packages: write
 
 jobs:
-  generate-release-note:
-    name: generate-release-note
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-
-      - name: Generated content
-        uses: yuk1ty/conventional-release-note@v1.1.1
-        id: gen_note
-        with:
-          kind: default
-          tag-pattern: v*
-          current-tag: ${{ github.ref_name }}
-          include-non-scoped: false
-
-      - name: Print the release note
-        run: echo "${{ steps.gen_note.outputs.summary }}"
-
-      - name: Create a new release note
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: ${{ steps.gen_note.outputs.summary }}
-          draft: false
-          prerelease: false
-  
   release-windows-amd64:
     name: release-windows-amd64
     strategy:
