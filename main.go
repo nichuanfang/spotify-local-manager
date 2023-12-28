@@ -415,7 +415,7 @@ func main() {
 		//syscall.SIGTERM 是一个系统调用信号，表示终止信号，通常由操作系统或其他进程发送给目标进程，要求其正常终止。
 		leftTracksChan := make(chan map[string][]util.MP3MetaInfo)
 
-		tempData := make(map[string][]util.MP3MetaInfo)
+		tempData := uncategorizedData
 
 		//// 将根路由指定为静态文件
 		//engine.GET("/", func(c *gin.Context) {
@@ -449,9 +449,7 @@ func main() {
 				tempData = data
 				c.JSON(200, tempData)
 			default:
-				if len(tempData) == 0 {
-					tempData = <-leftTracksChan
-				}
+				//说明已获取完毕 直接返回最后一次的tempData
 				c.JSON(200, tempData)
 			}
 		})
@@ -459,18 +457,21 @@ func main() {
 		go func() {
 			engine.Run(":" + strconv.Itoa(listenPort))
 		}()
-		fmt.Print("请打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹\n\n")
-		openURL(fmt.Sprintf("http://127.0.0.1:%d", listenPort))
 
 		//终止信号
 		exitSignal := make(chan struct{})
-		go getCategorizeStat(uncategorizedData, leftTracksChan, exitSignal)
+		//需要移动的文件路径  值为映射表  该映射表的键为临时文件路径 值为原文件路径
+		tickedTracksFilesChan := make(chan []map[string]string, 1)
+		go getCategorizeStat(uncategorizedData, leftTracksChan, tickedTracksFilesChan, exitSignal)
+
+		fmt.Print("请打开spotify客户端 设置=>添加歌曲来源=>选择spotify_local_temp文件夹,取消勾选spotify_local文件夹\n\n")
+		openURL(fmt.Sprintf("http://127.0.0.1:%d", listenPort))
 
 		select {
 		//等待终止信号
 		case <-exitSignal:
 			//后置处理
-			postProcess(uncategorizedData)
+			postProcess(tickedTracksFilesChan)
 			break
 		}
 	}

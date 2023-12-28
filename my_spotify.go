@@ -124,8 +124,7 @@ func loadLocalTempMusic() map[string][]util.MP3MetaInfo {
 
 // getAllPlayLists 获取所有的歌单
 func getAllPlayLists(sp *spotify.Client, ctx context.Context, userId string) []spotify.SimplePlaylist {
-
-	playlistsForUser, err := sp.GetPlaylistsForUser(ctx, userId)
+	playlistsForUser, err := sp.GetPlaylistsForUser(ctx, userId, spotify.Limit(50))
 	if err != nil {
 		fmt.Println("歌单查询失败: ", err)
 		os.Exit(1)
@@ -137,12 +136,10 @@ func getAllPlayLists(sp *spotify.Client, ctx context.Context, userId string) []s
 	//每页的数量
 	limit := playlistsForUser.Limit
 	//每页的初始偏移量
-	offset := playlistsForUser.Offset
+	offset := limit
 	playlists := playlistsForUser.Playlists
 	//循环获取歌单
 	for offset < total {
-		//每一轮循环偏移量增加
-		offset += limit
 		getPlaylistsForUser, err := sp.GetPlaylistsForUser(ctx, userId, spotify.Limit(limit), spotify.Offset(offset))
 		currPlaylists := getPlaylistsForUser.Playlists
 		if err != nil {
@@ -152,6 +149,8 @@ func getAllPlayLists(sp *spotify.Client, ctx context.Context, userId string) []s
 			break
 		}
 		playlists = append(playlists, currPlaylists...)
+		//每一轮循环偏移量增加
+		offset += limit
 	}
 
 	return playlists
@@ -179,15 +178,15 @@ func getAllPlayListsIds(sp *spotify.Client, ctx context.Context, userId string) 
 
 // getTracksByPlayList 根据歌单 获取歌单所有的本地曲目
 func getTracksByPlayList(sp *spotify.Client, ctx context.Context, playList spotify.SimplePlaylist) ([]util.MP3MetaInfo, error) {
-	pageItems, err := sp.GetPlaylistItems(ctx, playList.ID)
+	pageItems, err := sp.GetPlaylistItems(ctx, playList.ID, spotify.Limit(100))
 	if err != nil {
 		fmt.Println("err: ", err)
 		return make([]util.MP3MetaInfo, 0), err
 	} else if pageItems.Total == 0 {
 		return make([]util.MP3MetaInfo, 0), nil
 	}
-	offset := pageItems.Offset
 	limit := pageItems.Limit
+	offset := limit
 	total := pageItems.Total
 	items := pageItems.Items
 	//创建一个装载本地曲目的切片
@@ -212,11 +211,9 @@ func getTracksByPlayList(sp *spotify.Client, ctx context.Context, playList spoti
 	}
 	//更新items
 	for offset < total {
-		//更新offset
-		offset += limit
 		playlistItems, err := sp.GetPlaylistItems(ctx, playList.ID, spotify.Limit(limit), spotify.Offset(offset))
 		if err != nil || playlistItems.Total == 0 {
-			continue
+			break
 		}
 		for _, item := range playlistItems.Items {
 			if item.IsLocal {
@@ -235,6 +232,8 @@ func getTracksByPlayList(sp *spotify.Client, ctx context.Context, playList spoti
 				})
 			}
 		}
+		//更新offset
+		offset += limit
 	}
 	return localTracks, nil
 }
@@ -473,12 +472,13 @@ func handle(ctx context.Context, sp *spotify.Client) (success bool) {
 	return
 }
 
-func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTracksChan chan map[string][]util.MP3MetaInfo, exitSignal chan struct{}) {
+func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTracksChan chan map[string][]util.MP3MetaInfo, tickedTracksFilesChan chan []map[string]string, exitSignal chan struct{}) {
 	//创建uncategorizedData的深拷贝对象
 	copyUncategorizedData := make(map[string][]util.MP3MetaInfo)
 	for k, v := range uncategorizedData {
 		copyUncategorizedData[k] = v
 	}
+	tickedTracksData := make([]map[string]string, 0)
 	ctx := context.Background()
 	config := &oauth2.Config{
 		ClientID:     spotifyClientID,
@@ -514,68 +514,55 @@ func getCategorizeStat(uncategorizedData map[string][]util.MP3MetaInfo, leftTrac
 			}
 			//已剔除的曲目
 
-			leftTracks, _ := diffTracks(localTracks, tracks)
+			leftTracks, tickedTracks := diffTracks(localTracks, tracks)
 			if len(leftTracks) != 0 {
 				newData[playListName] = leftTracks
 			} else {
 				//	此歌单处理完毕
-				delete(uncategorizedData, playListName)
+				delete(copyUncategorizedData, playListName)
 			}
+
 			// 每剔除一首 就移动一首
-			//if len(tickedTracks)!=0{
-			//	moveToLocal(tickedTracks,playListName)
-			//}
+			if len(tickedTracks) != 0 {
+				for _, track := range tickedTracks {
+					tickedTracksData = append(tickedTracksData, map[string]string{
+						"source": filepath.Join(spotifyLocalTempPath, playListName, track.FileName),
+						"dest":   filepath.Join(spotifyLocalPath, playListName, track.FileName),
+					})
+				}
+			}
 		}
 		if len(newData) == 0 {
 			fmt.Println("分类已完成!")
-			leftTracksChan <- newData
-			exitSignal <- struct{}{}
 			go func() {
+				leftTracksChan <- newData
+				tickedTracksFilesChan <- tickedTracksData
+				exitSignal <- struct{}{}
 				tokenChan <- token
 			}()
 			break
 		}
 		leftTracksChan <- newData
-		time.Sleep(10 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 
 }
 
-// postProcess 接收到退出信号后的后置处理
-func postProcess(uncategorizedData map[string][]util.MP3MetaInfo) {
-	ctx := context.Background()
-	config := &oauth2.Config{
-		ClientID:     spotifyClientID,
-		ClientSecret: spotifyClientSecret,
-		RedirectURL:  redirectURL,
-		Scopes:       scopes,
-		Endpoint: oauth2.Endpoint{
-			AuthURL:  spotifyauth.AuthURL,
-			TokenURL: spotifyauth.TokenURL,
-		},
-	}
-	token := <-tokenChan
-	client := config.Client(ctx, token)
-	sp := spotify.New(client)
-	//遍历uncategorizedData临时文件夹
-	for playListName, localTracks := range uncategorizedData {
-		//根据歌单名称 在映射表里查询对应的歌单ID
-		playlistID, ok := playListMap[playListName]
-		if !ok || playlistID == "" {
-			//不存在这样的歌单或者id为空
-			continue
-		}
-		//根据歌单ID 查询spotify在线元数据 得到本地曲目元数据切片
-		tracks, err := getTracksByPlayList(sp, ctx, spotify.SimplePlaylist{ID: playlistID, Name: playListName})
+// 移动文件
+func postProcess(tickedTracksFilesChan chan []map[string]string) {
+	data := <-tickedTracksFilesChan
+	for _, item := range data {
+		source := item["source"]
+		dest := item["dest"]
+		err := os.Rename(source, dest)
 		if err != nil {
-			//查询歌单曲目失败
-			continue
-		}
-		//已剔除的曲目
-		_, tickedTracks := diffTracks(localTracks, tracks)
-		if len(tickedTracks) != 0 {
-			//将剔除的曲目移动到spotify_local文件夹
-			moveToLocal(tickedTracks, playListName)
+			_ = closeSpotifyProcess()
+			err = os.Rename(source, dest)
+			if err != nil {
+				fmt.Println("移动文件失败: ", err)
+				os.Exit(1)
+			}
 		}
 	}
+
 }
