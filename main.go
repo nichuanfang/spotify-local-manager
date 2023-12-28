@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	//spotify客户端id
+	//spotify客户端 id
 	spotifyClientID string
 	//spotify客户端密钥
 	spotifyClientSecret string
