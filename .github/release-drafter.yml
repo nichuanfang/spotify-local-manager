@@ -19,7 +19,7 @@ categories:
       - 'kind/bug'
   - title: 📝 Documentation updates
     labels:
-      - documentation
+      - 'documentation'
       - 'kind/doc'
   - title: 👻 Maintenance
     labels:
