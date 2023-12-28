@@ -45,8 +45,13 @@ jobs:
           current-tag: ${{ github.ref_name }}
           include-non-scoped: false
 
-      - name: Print the release note
-        run: echo "${{ steps.gen_note.outputs.summary }}"
+      - name: Generated content
+        uses: conventional-release-note@v1
+        id: gen_note
+        with:
+          kind: default
+          tag-pattern: v*
+          current-tag: ${{ github.ref_name }}
 
       - name: Create a new release note
         uses: softprops/action-gh-release@v1
