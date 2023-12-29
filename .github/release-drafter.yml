@@ -4,7 +4,7 @@ tag-template: 'v$NEXT_PATCH_VERSION'
 version-template: $MAJOR.$MINOR.$PATCH
 # Emoji reference: https://gitmoji.carloscuesta.me/
 categories:
-  - title: '🚀 Features'
+  - title: '✨ Features'
     labels:
       - 'feat'
       - 'feature'
@@ -21,13 +21,14 @@ categories:
     labels:
       - 'documentation'
       - 'kind/doc'
+      - 'doc'
   - title: 👻 Maintenance
     labels:
       - 'chore'
       - 'dependencies'
       - 'kind/chore'
       - 'kind/dep'
-  - title: 🚦 Tests
+  - title: ⚡️ Tests
     labels:
       - 'test'
       - 'tests'
@@ -37,6 +38,7 @@ exclude-labels:
   - 'skip-changelog'
   - 'invalid'
 change-template: '* $TITLE (#$NUMBER) @$AUTHOR'
+change-title-escapes: '\<*_&' # You can add # and @ to disable mentions, and add ` to disable code blocks.
 template: |
   ## What’s Changed
   $CHANGES
