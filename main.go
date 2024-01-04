@@ -86,6 +86,8 @@ type spotifyPrincipal struct {
 	SpotifyClientSecret string
 	//监听的端口 对应回调URL
 	Port int
+	//Spotify.exe路径
+	SpotifyPath string
 }
 
 // 返回重定向URL
@@ -244,7 +246,18 @@ func initOauthConfig(clientID string, clientSecret string, port int) {
 
 // 读取spotify.exe的协程
 func syncSpotifyAppPath(ctx context.Context) {
-
+	tokenFile, err := os.Open(tokenPath)
+	if err != nil {
+		return
+	}
+	principal := new(spotifyPrincipal)
+	decoder := json.NewDecoder(tokenFile)
+	err = decoder.Decode(principal)
+	if err != nil {
+		fmt.Println("token.json解析失败! ", err)
+		return
+	}
+	_ = tokenFile.Close()
 	//轮询查看是否有Spotify.exe 如果有就设置为全局变量 并退出
 loop:
 	for {
@@ -253,19 +266,44 @@ loop:
 			//主线程强制退出
 			break loop
 		default:
-			//查询是否有Spotify.exe进程 如果有 则设置为全局变量
-			spotifyInfo, err := getProcessInfo("Spotify.exe")
-			if err != nil {
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			spotifyPath := extractFilePath(spotifyInfo)
-			if spotifyPath != "" {
-				//更新全局变量
-				spotifyAppPath = strings.ReplaceAll(spotifyPath, "\r", "")
+			//如果token.json存储了Spotify.exe的路径 直接读取 不监听;如果没有 则在监听到之后就写入到token.json中
+			if principal.SpotifyPath != "" {
+				// 如果SpotifyPath不为空 直接跳过
+				spotifyAppPath = principal.SpotifyPath
 				break loop
 			} else {
-				time.Sleep(1 * time.Second)
+				//查询是否有Spotify.exe进程 如果有 则设置为全局变量
+				spotifyInfo, err := getProcessInfo("Spotify.exe")
+				if err != nil {
+					time.Sleep(1 * time.Second)
+					continue
+				}
+				spotifyPath := extractFilePath(spotifyInfo)
+				if spotifyPath != "" {
+					//更新全局变量
+					spotifyAppPath = strings.ReplaceAll(spotifyPath, "\r", "")
+					//写入到token.json中
+					tokenFile, err := os.Create(tokenPath)
+					if err != nil {
+						time.Sleep(1 * time.Second)
+						continue
+					}
+					encoder := json.NewEncoder(tokenFile)
+					principal.SpotifyPath = spotifyAppPath
+					err = encoder.Encode(principal)
+					if err != nil {
+						fmt.Println("无法写入文件: ", err)
+						os.Exit(1)
+					}
+					err = tokenFile.Close()
+					if err != nil {
+						fmt.Println("无法关闭文件: ", err)
+						os.Exit(1)
+					}
+					break loop
+				} else {
+					time.Sleep(1 * time.Second)
+				}
 			}
 		}
 	}
@@ -339,7 +377,7 @@ func callback(server *http.Server) {
 		//申请token
 		token := exchangeCodeForToken(c.Writer, c.Request)
 		if token == nil {
-			c.Writer.WriteString("无法申请token!")
+			_, _ = c.Writer.WriteString("无法申请token!")
 			os.Exit(1)
 		}
 		go func() { tokenChan <- token }()
@@ -372,9 +410,25 @@ func callback(server *http.Server) {
 			stopChan <- struct{}{}
 		}
 	})
-	_, err := os.Open(tokenPath)
+	tokenFile, err := os.Open(tokenPath)
 	if err != nil {
+		//如果不存在客户端id 密钥和端口信息就
 		initOauthConfig(spotifyClientID, spotifyClientSecret, listenPort)
+	} else {
+		principal := new(spotifyPrincipal)
+		decoder := json.NewDecoder(tokenFile)
+		err := decoder.Decode(principal)
+		if err != nil {
+			fmt.Println("无法解码token.json: ", err)
+			os.Exit(1)
+		} else if principal.Token == nil {
+			fmt.Println("无效的token.json!")
+			os.Exit(1)
+		}
+		spotifyClientID = principal.SpotifyClientID
+		spotifyClientSecret = principal.SpotifyClientSecret
+		listenPort = principal.Port
+		_ = tokenFile.Close()
 	}
 	//绑定server
 	server.Handler = router
