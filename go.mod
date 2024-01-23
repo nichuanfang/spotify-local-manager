@@ -4,7 +4,7 @@ go 1.21.5
 
 require (
 	github.com/bogem/id3v2 v1.2.0
-	github.com/zmb3/spotify/v2 v2.4.0
+	github.com/zmb3/spotify/v2 v2.4.1
 )
 
 require (
